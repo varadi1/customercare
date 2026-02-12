@@ -51,8 +51,22 @@ class SearchResult(BaseModel):
     pre_authority_score: Optional[float] = None
 
 
+class ReferencedChunk(BaseModel):
+    """A chunk resolved from a cross-reference in the main results."""
+    id: Optional[str] = None
+    text: str
+    source: str
+    category: str
+    chunk_type: str
+    score: float
+    ref_type: str           # "felhivas", "gyik", "melleklet", "segedlet"
+    ref_section: str        # "4.2", "12", "*"
+    ref_text: str           # Original reference text found
+
+
 class SearchResponse(BaseModel):
     results: list[SearchResult]
+    referenced_chunks: list[ReferencedChunk] = []
     query: str
     total_found: int
 

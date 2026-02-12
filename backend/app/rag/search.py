@@ -10,6 +10,7 @@ from .bm25 import BM25Index
 from .reranker import rerank
 from .authority import apply_authority_weighting
 from .query_expansion import expand_query, expand_query_async
+# references imported lazily in main.py to avoid circular import
 
 _chroma: Optional[chromadb.HttpClient] = None
 

@@ -190,7 +190,7 @@ async def expire_document(source: str, version_below: int | None = None):
 
 @app.post("/search", response_model=SearchResponse)
 async def search(query: SearchQuery):
-    """Hybrid search: semantic + BM25 → RRF → Cohere rerank."""
+    """Hybrid search: semantic + BM25 → RRF → rerank → authority → cross-ref resolution."""
     try:
         results = await rag_search.search_async(
             query=query.query,
@@ -199,8 +199,22 @@ async def search(query: SearchQuery):
             chunk_type=query.chunk_type,
             only_valid=query.only_valid,
         )
+        
+        # Cross-reference resolution
+        from app.rag.references import resolve_references_in_results
+        from app.models import ReferencedChunk
+        ref_chunks = []
+        try:
+            raw_refs = resolve_references_in_results(results, max_total_refs=5)
+            ref_chunks = [ReferencedChunk(**r) for r in raw_refs]
+            if ref_chunks:
+                print(f"[hanna] Resolved {len(ref_chunks)} cross-references")
+        except Exception as e:
+            print(f"[hanna] Cross-ref resolution failed: {e}")
+        
         return SearchResponse(
             results=[SearchResult(**r) for r in results],
+            referenced_chunks=ref_chunks,
             query=query.query,
             total_found=len(results),
         )
