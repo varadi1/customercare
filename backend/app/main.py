@@ -26,9 +26,10 @@ from .rag import search as rag_search
 from .rag import ingest as rag_ingest
 from .rag.bm25 import BM25Index
 from .rag import reranker
-from .email import poller, drafts, history, attachments
-from .obsidian import ingest as obsidian_ingest
-from .obsidian import search as obsidian_search
+from .email import poller, drafts, history, attachments, feedback, templates
+from .obsidian import pg_ingest as obsidian_ingest
+from .obsidian import pg_search as obsidian_search
+from . import analytics
 
 
 @asynccontextmanager
@@ -80,6 +81,22 @@ async def health():
 async def reranker_status():
     """Get reranker status."""
     return reranker.get_status()
+
+
+# ─── PDF Ingestion ────────────────────────────────────────────────────────────
+
+@app.post("/ingest/pdfs")
+async def ingest_pdfs(pdf_dir: str = "/app/data/pdfs"):
+    """Ingest all PDFs from a directory into the knowledge base."""
+    try:
+        from .ingest_pdfs import ingest_all_pdfs
+        import io, contextlib
+        f = io.StringIO()
+        with contextlib.redirect_stdout(f):
+            ingest_all_pdfs(pdf_dir)
+        return {"status": "ok", "log": f.getvalue()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── RAG: Ingestion ──────────────────────────────────────────────────────────
@@ -262,10 +279,15 @@ async def invalidate_chunks(req: InvalidateRequest):
 # ─── Email: Polling ───────────────────────────────────────────────────────────
 
 @app.post("/emails/poll", response_model=BatchPollResult)
-async def poll_emails():
-    """Poll all shared mailboxes for new emails."""
+async def poll_emails(hours: float | None = None):
+    """Poll all shared mailboxes for new emails.
+
+    Args:
+        hours: if set, fetch emails from the last N hours (overrides saved state).
+               Use hours=4 for overlap between 2-hourly cron runs.
+    """
     try:
-        results = await poller.poll_all_mailboxes()
+        results = await poller.poll_all_mailboxes(hours=hours)
         total = sum(r.new_emails for r in results)
         return BatchPollResult(results=results, total_new=total)
     except Exception as e:
@@ -317,6 +339,21 @@ async def mark_sent_endpoint(mailbox: str, hours: int = 4):
     """
     try:
         result = await drafts.mark_sent_emails(mailbox, hours)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Email: Feedback ──────────────────────────────────────────────────────────
+
+@app.post("/emails/feedback/check")
+async def feedback_check(mailbox: str = "info@neuzrt.hu", hours: int = 48):
+    """Compare sent emails with stored Hanna drafts.
+    
+    Returns how many drafts were accepted unchanged vs modified.
+    """
+    try:
+        result = await feedback.check_feedback(mailbox=mailbox, hours=hours)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -423,6 +460,73 @@ async def analyze_email_images(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── Templates ────────────────────────────────────────────────────────────────
+
+@app.get("/templates")
+async def list_templates():
+    """List all email templates."""
+    return {"templates": templates.list_templates(), "count": len(templates.TEMPLATES)}
+
+
+class TemplateMatchRequest(BaseModel):
+    email_text: str
+
+
+@app.post("/templates/match")
+async def match_template(req: TemplateMatchRequest):
+    """Match email text against templates."""
+    key, score = templates.match_template(req.email_text)
+    if key is None:
+        return {"matched": False, "template_key": None, "score": 0.0}
+    tmpl = templates.TEMPLATES[key]
+    return {
+        "matched": True,
+        "template_key": key,
+        "template_name": tmpl["name"],
+        "score": score,
+        "confidence": tmpl["confidence"],
+        "response_template": tmpl["response_template"],
+    }
+
+
+# ─── Attachment Extraction ────────────────────────────────────────────────────
+
+@app.post("/emails/{mailbox}/messages/{message_id}/extract-attachments")
+async def extract_attachments(mailbox: str, message_id: str):
+    """Extract text from all attachments (PDF + images)."""
+    try:
+        results = await attachments.extract_all_attachments(mailbox, message_id)
+        return {"attachments": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── BM25 Rebuild ────────────────────────────────────────────────────────────
+
+@app.post("/bm25/rebuild")
+async def bm25_rebuild():
+    """Manually rebuild the BM25 index."""
+    try:
+        result = BM25Index.get().rebuild()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Analytics ────────────────────────────────────────────────────────────────
+
+@app.get("/analytics/weekly")
+async def analytics_weekly(weeks: int = 1):
+    """Weekly thematic analysis of emails."""
+    return analytics.analyze_weekly(weeks)
+
+
+@app.post("/analytics/weekly/report")
+async def analytics_weekly_report(weeks: int = 1):
+    """Generate and save weekly report to Obsidian."""
+    return analytics.generate_weekly_report(weeks)
+
+
 # ─── Obsidian: Ingestion & Search ────────────────────────────────────────────
 
 @app.post("/obsidian/ingest")
@@ -437,7 +541,7 @@ async def ingest_obsidian(
         force: If True, re-process all files regardless of hash
     """
     try:
-        result = obsidian_ingest.ingest_vault(
+        result = await obsidian_ingest.ingest_vault(
             vault_path=vault_path,
             force=force,
             collection_name="obsidian_notes"
@@ -463,7 +567,7 @@ async def search_obsidian(
         caller: Optional identifier for who made the search (bob, max, eve, etc.)
     """
     try:
-        results = obsidian_search.search_obsidian_notes(
+        results = await obsidian_search.search_obsidian_notes(
             query=q,
             limit=limit,
             folder_filter=folder,
@@ -488,6 +592,7 @@ async def search_obsidian_hybrid(
     caller: str | None = None,
     rerank: bool = True,
     instruction: str = "",
+    compact: bool = False,
 ):
     """Hybrid search: semantic + BM25 → RRF fusion → reranking.
     
@@ -498,6 +603,7 @@ async def search_obsidian_hybrid(
         caller: Who made the search (bob, max, eve, etc.)
         rerank: Whether to apply reranking (default True)
         instruction: Custom instruction for reranker
+        compact: If true, truncate content to 200 chars (saves context tokens)
     """
     try:
         results = await obsidian_search.search_obsidian_hybrid(
@@ -509,12 +615,17 @@ async def search_obsidian_hybrid(
             use_reranker=rerank,
             instruction=instruction,
         )
+        if compact:
+            for r in results:
+                if "content" in r and len(r["content"]) > 200:
+                    r["content"] = r["content"][:200] + "…"
         return {
             "results": results,
             "query": q,
             "total_found": len(results),
             "folder_filter": folder,
-            "method": "hybrid+rerank" if rerank else "hybrid"
+            "method": "hybrid+rerank" if rerank else "hybrid",
+            "compact": compact,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -524,7 +635,7 @@ async def search_obsidian_hybrid(
 async def obsidian_stats():
     """Obsidian notes collection statistics."""
     try:
-        return obsidian_search.get_obsidian_stats("obsidian_notes")
+        return await obsidian_search.get_obsidian_stats("obsidian_notes")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -546,6 +657,6 @@ async def obsidian_search_stats(hours: int = 24):
 async def obsidian_last_sync():
     """Get information about the last Obsidian vault sync."""
     try:
-        return obsidian_ingest.get_last_sync_info()
+        return await obsidian_ingest.get_last_sync_info()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
