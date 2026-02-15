@@ -11,7 +11,8 @@ class Settings(BaseSettings):
 
     # Embedding
     embedding_backend: str = "bge-m3"  # "bge-m3" or "openai"
-    bge_m3_url: str = "http://host.docker.internal:8104"
+    bge_m3_url: str = "http://host.docker.internal:8104"  # search instance
+    bge_m3_ingest_url: str = "http://host.docker.internal:8114"  # ingest instance
     openai_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"  # OpenAI fallback
     embedding_dimensions: int = 1024  # BGE-M3: 1024, OpenAI: 1536

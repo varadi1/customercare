@@ -60,3 +60,24 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 def embed_query(query: str) -> list[float]:
     """Embed a single query."""
     return embed_texts([query])[0]
+
+
+def _embed_bge_m3_ingest(texts: list[str]) -> list[list[float]]:
+    """Embed via local BGE-M3 INGEST instance (port 8114)."""
+    with httpx.Client(timeout=300.0) as client:
+        resp = client.post(
+            f"{settings.bge_m3_ingest_url}/embed",
+            json={"texts": texts},
+        )
+        resp.raise_for_status()
+        return resp.json()["embeddings"]
+
+
+def embed_texts_ingest(texts: list[str]) -> list[list[float]]:
+    """Embed texts using the dedicated ingest instance (port 8114).
+    Falls back to search instance if ingest is unavailable."""
+    try:
+        return _embed_bge_m3_ingest(texts)
+    except Exception as e:
+        print(f"[hanna] BGE-M3 ingest instance failed: {e}, falling back to search instance")
+        return embed_texts(texts)

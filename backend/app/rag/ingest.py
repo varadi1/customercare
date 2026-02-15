@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 
 from ..config import settings
 from .chunker import chunk_text, chunk_markdown
-from .embeddings import embed_texts
+from .embeddings import embed_texts_ingest as embed_texts
 from .search import get_collection
 from .contextual import enrich_chunk
 

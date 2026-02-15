@@ -14,7 +14,7 @@ from typing import Any
 import asyncpg
 
 from ..rag.chunker import chunk_markdown, chunk_text
-from ..rag.embeddings import embed_texts
+from ..rag.embeddings import embed_texts_ingest as embed_texts
 
 PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/obsidian_rag"
 
