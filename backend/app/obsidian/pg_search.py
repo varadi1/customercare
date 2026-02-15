@@ -19,7 +19,7 @@ from ..rag import reranker
 _pool: asyncpg.Pool | None = None
 
 # PostgreSQL connection config
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/neu_docs"
+PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/obsidian_rag"
 
 SEARCH_LOG_PATH = Path("/app/data/obsidian_search_log.jsonl")
 

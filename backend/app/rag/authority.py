@@ -25,7 +25,10 @@ AUTHORITY_WEIGHTS: dict[str, float] = {
 DEFAULT_WEIGHT = 0.55
 
 # How much authority affects the final score (0 = no effect, 1 = full effect)
-AUTHORITY_INFLUENCE = 0.25
+AUTHORITY_INFLUENCE = 0.40
+
+# Chunk types that should be guaranteed in top results when relevant
+PRIORITY_CHUNK_TYPES = {"palyazat_felhivas", "palyazat_melleklet", "gyik", "kozlemeny"}
 
 
 def get_authority_weight(chunk_type: str) -> float:
@@ -73,4 +76,30 @@ def apply_authority_weighting(results: list[dict], influence: float | None = Non
     # Re-sort by adjusted score
     weighted.sort(key=lambda x: x["score"], reverse=True)
     
+    # Authority floor: ensure priority chunk types with score > 0.5 are in top 3
+    _apply_authority_floor(weighted)
+    
     return weighted
+
+
+def _apply_authority_floor(results: list[dict]) -> None:
+    """Ensure high-authority chunks with decent scores are in the top 3.
+    
+    If a priority chunk type (felhivas, melleklet, gyik, kozlemeny) has
+    pre_authority_score > 0.5 but is not in the top 3, swap it in.
+    Modifies the list in-place.
+    """
+    if len(results) <= 3:
+        return
+    
+    # Find priority chunks outside top 3 that have good scores
+    for i in range(3, len(results)):
+        chunk_type = results[i].get("chunk_type", "")
+        pre_score = results[i].get("pre_authority_score", 0)
+        
+        if chunk_type in PRIORITY_CHUNK_TYPES and pre_score > 0.5:
+            # Find the lowest-ranked non-priority item in top 3 to swap with
+            for j in range(2, -1, -1):
+                if results[j].get("chunk_type", "") not in PRIORITY_CHUNK_TYPES:
+                    results[j], results[i] = results[i], results[j]
+                    break

@@ -9,12 +9,14 @@ class Settings(BaseSettings):
     chroma_port: int = 8100
     chroma_collection: str = "hanna_knowledge"
 
-    # OpenAI
+    # Embedding
+    embedding_backend: str = "bge-m3"  # "bge-m3" or "openai"
+    bge_m3_url: str = "http://host.docker.internal:8104"
     openai_api_key: str = ""
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
+    embedding_model: str = "text-embedding-3-small"  # OpenAI fallback
+    embedding_dimensions: int = 1024  # BGE-M3: 1024, OpenAI: 1536
 
-    # Cohere (reranking)
+    # Cohere (reranking fallback)
     cohere_api_key: str = ""
     rerank_model: str = "rerank-v3.5"
 

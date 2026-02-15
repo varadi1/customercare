@@ -16,7 +16,7 @@ import asyncpg
 from ..rag.chunker import chunk_markdown, chunk_text
 from ..rag.embeddings import embed_texts
 
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/neu_docs"
+PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/obsidian_rag"
 
 _pool: asyncpg.Pool | None = None
 

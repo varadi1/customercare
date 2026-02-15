@@ -33,6 +33,10 @@ services:
     environment:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
+      - CHROMA_COLLECTION=hanna_knowledge_bge_m3
+      - EMBEDDING_BACKEND=bge-m3
+      - BGE_M3_URL=http://host.docker.internal:8104
+      - EMBEDDING_DIMENSIONS=1024
       - ANONYMIZED_TELEMETRY=false
       - CHROMA_TELEMETRY=false
       - OPENAI_API_KEY=${OPENAI_API_KEY}

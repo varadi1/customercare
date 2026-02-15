@@ -7,8 +7,16 @@ from typing import Optional
 from ..config import settings
 from .embeddings import embed_query
 from .bm25 import BM25Index
-from .reranker import rerank
+from .reranker import rerank, get_status as _get_reranker_status
 from .authority import apply_authority_weighting
+
+
+def _get_reranker_mode() -> str:
+    """Get actual reranker mode from the reranker module."""
+    try:
+        return _get_reranker_status().get("mode", "unknown")
+    except Exception:
+        return "unknown"
 from .query_expansion import expand_query, expand_query_async
 # references imported lazily in main.py to avoid circular import
 
@@ -270,7 +278,7 @@ def get_collection_stats() -> dict:
             "total_chunks": collection.count(),
             "collection_name": settings.chroma_collection,
             "bm25_indexed": len(bm25_index._docs) if not bm25_index._dirty else "stale",
-            "reranker": "cohere" if settings.cohere_api_key else "disabled",
+            "reranker": _get_reranker_mode(),
         }
     except Exception as e:
         return {"error": str(e)}

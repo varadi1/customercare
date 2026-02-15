@@ -141,6 +141,23 @@ async def create_reply_draft(
             client, headers, mailbox, reply_to_message_id, confidence
         )
 
+    # Save to draft store for feedback tracking
+    try:
+        from .draft_store import save_draft
+        conversation_id = draft.get("conversationId", "")
+        save_draft(
+            conversation_id=conversation_id,
+            message_id=reply_to_message_id,
+            mailbox=mailbox,
+            draft_html=body_html,
+            confidence=confidence,
+            draft_id=draft_id,
+            subject=subject,
+        )
+        print(f"[drafts] Saved to draft store: {subject[:40]}...")
+    except Exception as e:
+        print(f"[drafts] Draft store save failed (non-fatal): {e}")
+
     return DraftResult(
         draft_id=draft_id,
         mailbox=mailbox,

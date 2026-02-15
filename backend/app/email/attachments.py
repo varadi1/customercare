@@ -134,7 +134,7 @@ async def analyze_image(
     
     try:
         response = await client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -170,6 +170,72 @@ async def analyze_image(
     except Exception as e:
         print(f"[attachments] Vision API error: {e}")
         return f"Hiba a képelemzés során: {str(e)}"
+
+
+PDF_TYPES = {
+    "application/pdf",
+}
+
+
+async def extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from PDF bytes using pymupdf."""
+    import fitz
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text_parts = []
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+        return "\n\n".join(text_parts).strip()
+    except Exception as e:
+        return f"Hiba a PDF feldolgozás során: {e}"
+
+
+async def extract_all_attachments(
+    mailbox: str,
+    message_id: str,
+    max_items: int = 10,
+) -> list[dict]:
+    """Extract text from all attachments (PDF → pymupdf, image → Vision).
+
+    Returns list of {name, type, extracted_text}.
+    """
+    atts = await list_attachments(mailbox, message_id)
+    atts = atts[:max_items]
+
+    results = []
+    for att in atts:
+        content = await get_attachment_content(mailbox, message_id, att.id)
+        if content is None:
+            results.append({
+                "name": att.name,
+                "type": att.content_type,
+                "extracted_text": "Nem sikerült letölteni a csatolmányt",
+            })
+            continue
+
+        if att.content_type in PDF_TYPES:
+            text = await extract_pdf_text(content)
+            results.append({
+                "name": att.name,
+                "type": "pdf",
+                "extracted_text": text,
+            })
+        elif att.is_image:
+            desc = await analyze_image(content, att.name, att.content_type)
+            results.append({
+                "name": att.name,
+                "type": "image",
+                "extracted_text": desc,
+            })
+        else:
+            results.append({
+                "name": att.name,
+                "type": att.content_type,
+                "extracted_text": "(nem támogatott formátum)",
+            })
+
+    return results
 
 
 async def analyze_email_attachments(

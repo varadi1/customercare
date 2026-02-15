@@ -36,6 +36,11 @@ class BM25Index:
         """Mark index as stale — will reload on next search."""
         self._dirty = True
 
+    def rebuild(self):
+        """Force rebuild the BM25 index now."""
+        self._load_from_chromadb()
+        return {"status": "ok", "documents": len(self._docs)}
+
     def _tokenize(self, text: str) -> list[str]:
         """Simple whitespace + punctuation tokenizer for Hungarian text."""
         text = text.lower()

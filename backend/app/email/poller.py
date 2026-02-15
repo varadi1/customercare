@@ -115,12 +115,21 @@ async def poll_mailbox(
     )
 
 
-async def poll_all_mailboxes() -> list[PollResult]:
-    """Poll all configured shared mailboxes."""
+async def poll_all_mailboxes(hours: float | None = None) -> list[PollResult]:
+    """Poll all configured shared mailboxes.
+
+    Args:
+        hours: if set, override the saved state and fetch emails from the last N hours.
+               This ensures overlap between cron runs so no emails slip through.
+    """
     mailboxes = [m.strip() for m in settings.shared_mailboxes.split(",") if m.strip()]
+    since_override = None
+    if hours:
+        since_override = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
     results = []
     for mb in mailboxes:
-        result = await poll_mailbox(mb)
+        result = await poll_mailbox(mb, since=since_override)
         results.append(result)
     return results
 
