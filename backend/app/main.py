@@ -31,6 +31,7 @@ from .email import poller, drafts, history, attachments, feedback, templates
 from .obsidian import pg_ingest as obsidian_ingest
 from .obsidian import pg_search as obsidian_search
 from .obsidian import kg_extract
+from .obsidian import kg_search as obsidian_kg_search
 from . import analytics
 
 
@@ -595,8 +596,9 @@ async def search_obsidian_hybrid(
     rerank: bool = True,
     instruction: str = "",
     compact: bool = False,
+    graph: bool = True,
 ):
-    """Hybrid search: semantic + BM25 → RRF fusion → reranking.
+    """Hybrid search: semantic + BM25 + Knowledge Graph → RRF fusion → reranking.
     
     Args:
         q: Search query
@@ -606,6 +608,7 @@ async def search_obsidian_hybrid(
         rerank: Whether to apply reranking (default True)
         instruction: Custom instruction for reranker
         compact: If true, truncate content to 200 chars (saves context tokens)
+        graph: Whether to use Knowledge Graph expansion (default True)
     """
     try:
         results = await obsidian_search.search_obsidian_hybrid(
@@ -616,18 +619,28 @@ async def search_obsidian_hybrid(
             caller=caller,
             use_reranker=rerank,
             instruction=instruction,
+            use_graph=graph,
         )
         if compact:
             for r in results:
                 if "content" in r and len(r["content"]) > 200:
                     r["content"] = r["content"][:200] + "…"
+
+        graph_boosted = sum(1 for r in results if r.get("graph_boosted"))
+        method = "hybrid"
+        if graph:
+            method += "+graph"
+        if rerank:
+            method += "+rerank"
+
         return {
             "results": results,
             "query": q,
             "total_found": len(results),
             "folder_filter": folder,
-            "method": "hybrid+rerank" if rerank else "hybrid",
+            "method": method,
             "compact": compact,
+            "graph_boosted_count": graph_boosted,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -795,3 +808,33 @@ async def kg_stats():
         "entity_types": {r["type"]: r["cnt"] for r in type_counts},
         "relation_types": {r["relation_type"]: r["cnt"] for r in relation_counts},
     }
+
+
+@app.get("/obsidian/graph/search")
+async def kg_graph_search(
+    q: str,
+    entity_threshold: float = 0.35,
+    max_entities: int = 5,
+    max_related: int = 15,
+    max_chunks: int = 8,
+):
+    """Graph-only search: detect entities → expand graph → return related chunks.
+
+    Useful for relationship queries like "ki dolgozik az ENAIRGY projekten?"
+    """
+    try:
+        result = await obsidian_kg_search.graph_augmented_search(
+            query=q,
+            entity_threshold=entity_threshold,
+            max_entities=max_entities,
+            max_related=max_related,
+            max_graph_chunks=max_chunks,
+        )
+        return {
+            "query": q,
+            **result,
+            "total_chunks": len(result["graph_chunks"]),
+            "total_entities": len(result["matched_entities"]) + len(result["related_entities"]),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

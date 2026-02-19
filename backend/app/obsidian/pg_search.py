@@ -14,6 +14,7 @@ import asyncpg
 
 from ..rag.embeddings import embed_query
 from ..rag import reranker
+from . import kg_search
 
 # Connection pool (initialized on first use)
 _pool: asyncpg.Pool | None = None
@@ -146,6 +147,7 @@ async def search_obsidian_hybrid(
     caller: str | None = None,
     use_reranker: bool = True,
     instruction: str = "",
+    use_graph: bool = True,
 ) -> list[dict[str, Any]]:
     """Hybrid search: pgvector cosine + tsvector BM25 → RRF fusion → reranking."""
     query_embedding = embed_query(query)
@@ -215,6 +217,32 @@ async def search_obsidian_hybrid(
             "rrf_score": float(r["rrf_score"]),
         })
 
+    # Graph expansion: detect entities, traverse graph, merge related chunks
+    graph_info = None
+    if use_graph:
+        try:
+            graph_info = await kg_search.graph_augmented_search(query)
+            if graph_info["graph_chunks"]:
+                # Merge graph chunks (avoid duplicates by chunk_id)
+                existing_ids = {r["id"] for r in results}
+                graph_added = 0
+                for gc in graph_info["graph_chunks"]:
+                    if gc["id"] not in existing_ids:
+                        # Give graph chunks a baseline rrf_score so they rank mid-list
+                        gc["semantic_score"] = 0.0
+                        gc["bm25_score"] = 0.0
+                        gc["rrf_score"] = 0.005  # low base, reranker will re-score
+                        gc["graph_boosted"] = True
+                        results.append(gc)
+                        existing_ids.add(gc["id"])
+                        graph_added += 1
+                if graph_added:
+                    print(f"[obsidian-search] Graph expansion added {graph_added} chunks "
+                          f"({len(graph_info['matched_entities'])} entities matched, "
+                          f"{len(graph_info['related_entities'])} related)")
+        except Exception as e:
+            print(f"[obsidian-search] Graph expansion failed (non-fatal): {e}")
+
     # Rerank
     if use_reranker and results:
         if not instruction:
@@ -236,7 +264,7 @@ async def search_obsidian_hybrid(
     # Format
     formatted = []
     for r in results:
-        formatted.append({
+        entry = {
             "id": r.get("id", ""),
             "content": r.get("content", r.get("text", "")),
             "metadata": r.get("metadata", {}),
@@ -246,9 +274,16 @@ async def search_obsidian_hybrid(
             "rrf_score": r.get("rrf_score"),
             "rerank_score": r.get("rerank_score"),
             "reranker": r.get("reranker"),
-        })
+        }
+        if r.get("graph_boosted"):
+            entry["graph_boosted"] = True
+        formatted.append(entry)
 
-    _log_search(query, len(formatted), folder_filter, caller, "hybrid+rerank")
+    method = "hybrid+rerank"
+    if graph_info and graph_info["matched_entities"]:
+        method = "hybrid+graph+rerank"
+
+    _log_search(query, len(formatted), folder_filter, caller, method)
     return formatted
 
 
