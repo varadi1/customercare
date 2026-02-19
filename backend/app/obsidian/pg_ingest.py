@@ -15,6 +15,7 @@ import asyncpg
 
 from ..rag.chunker import chunk_markdown, chunk_text
 from ..rag.embeddings import embed_texts_ingest as embed_texts
+from .enrichment import enrich_chunks_batch, ENRICHMENT_ENABLED
 
 PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/obsidian_rag"
 
@@ -148,37 +149,59 @@ async def _ingest_file(
     if not chunks:
         return 0
 
-    # Truncate chunks to 6000 chars max (BGE-M3 limit)
-    truncated = [c[:6000] for c in chunks]
-
-    # Generate embeddings
-    try:
-        embeddings = embed_texts(truncated)
-    except Exception as e:
-        print(f"[obsidian-pg] Embedding failed for {file_path}: {e}")
-        return 0
-
     relative_path = str(file_path.relative_to(vault_path))
     folder_type = _extract_folder_type(file_path, vault_path)
     modified_time = datetime.fromtimestamp(file_path.stat().st_mtime)
 
+    # Contextual enrichment (LLM-generated context prefix per chunk)
+    chunk_dicts = [{"content": c} for c in chunks]
+    if ENRICHMENT_ENABLED:
+        try:
+            chunk_dicts = enrich_chunks_batch(
+                chunk_dicts,
+                file_name=file_path.name,
+                folder_type=folder_type,
+            )
+        except Exception as e:
+            print(f"[obsidian-pg] Enrichment failed for {file_path}, proceeding without: {e}")
+
+    # Use enriched content for embedding (includes context prefix)
+    texts_for_embedding = [
+        cd.get("enriched_content", cd["content"])[:6000]
+        for cd in chunk_dicts
+    ]
+
+    # Generate embeddings
+    try:
+        embeddings = embed_texts(texts_for_embedding)
+    except Exception as e:
+        print(f"[obsidian-pg] Embedding failed for {file_path}: {e}")
+        return 0
+
     pool = await _get_pool()
 
-    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+    for i, (cd, embedding) in enumerate(zip(chunk_dicts, embeddings)):
         chunk_id = _generate_chunk_id(relative_path, i, file_hash)
         embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+        context_prefix = cd.get("context_prefix")
+        original_content = cd.get("original_content")
+        # Store the original content in 'content' column, context separately
+        chunk_content = cd["content"]
 
         await pool.execute(
             """INSERT INTO obsidian_chunks
                (chunk_id, file_path, file_name, folder, chunk_index, content, embedding,
-                file_hash, modified_at, metadata)
-               VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9, $10)
+                file_hash, modified_at, metadata, context_prefix, original_content)
+               VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9, $10, $11, $12)
                ON CONFLICT (chunk_id) DO UPDATE
                SET content = EXCLUDED.content, embedding = EXCLUDED.embedding,
                    file_hash = EXCLUDED.file_hash, modified_at = EXCLUDED.modified_at,
+                   context_prefix = EXCLUDED.context_prefix,
+                   original_content = EXCLUDED.original_content,
                    updated_at = NOW()""",
             chunk_id, relative_path, file_path.name, folder_type, i,
-            chunk, embedding_str, file_hash, modified_time, "{}",
+            chunk_content, embedding_str, file_hash, modified_time, "{}",
+            context_prefix, original_content,
         )
 
     return len(chunks)

@@ -20,11 +20,13 @@ CREATE TABLE IF NOT EXISTS obsidian_chunks (
     modified_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    metadata JSONB DEFAULT '{}'
+    metadata JSONB DEFAULT '{}',
+    context_prefix TEXT,           -- LLM-generated contextual summary
+    original_content TEXT          -- original content before enrichment
 );
 
 -- Indexes
-CREATE INDEX IF NOT EXISTS idx_obsidian_chunks_embedding ON obsidian_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_obsidian_chunks_embedding_hnsw ON obsidian_chunks USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 200);
 CREATE INDEX IF NOT EXISTS idx_obsidian_chunks_tsv ON obsidian_chunks USING GIN (tsv);
 CREATE INDEX IF NOT EXISTS idx_obsidian_chunks_file_path ON obsidian_chunks (file_path);
 CREATE INDEX IF NOT EXISTS idx_obsidian_chunks_folder ON obsidian_chunks (folder);

@@ -107,7 +107,7 @@ async def search_obsidian_notes(
         params.append(folder_filter)
 
     sql = f"""
-        SELECT chunk_id, content, file_path, file_name, folder, metadata,
+        SELECT chunk_id, content, context_prefix, file_path, file_name, folder, metadata,
                1 - (embedding <=> $1::vector) AS semantic_score
         FROM obsidian_chunks
         WHERE embedding IS NOT NULL {folder_clause}
@@ -119,9 +119,12 @@ async def search_obsidian_notes(
 
     results = []
     for r in rows:
+        content = r["content"]
+        ctx = r["context_prefix"]
         results.append({
             "id": r["chunk_id"],
-            "content": r["content"],
+            "content": f"{ctx}\n\n{content}" if ctx else content,
+            "context_prefix": ctx,
             "metadata": {
                 "file_path": r["file_path"],
                 "file_name": r["file_name"],
@@ -162,7 +165,7 @@ async def search_obsidian_hybrid(
 
     sql = f"""
         WITH semantic AS (
-            SELECT id, chunk_id, content, file_path, file_name, folder, metadata,
+            SELECT id, chunk_id, content, context_prefix, file_path, file_name, folder, metadata,
                    1 - (embedding <=> $1::vector) AS semantic_score,
                    ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS sem_rank
             FROM obsidian_chunks
@@ -178,7 +181,7 @@ async def search_obsidian_hybrid(
             WHERE tsv @@ plainto_tsquery('simple', $2) {folder_clause}
             LIMIT {fetch_limit}
         )
-        SELECT s.chunk_id, s.content, s.file_path, s.file_name, s.folder, s.metadata,
+        SELECT s.chunk_id, s.content, s.context_prefix, s.file_path, s.file_name, s.folder, s.metadata,
                s.semantic_score,
                COALESCE(b.bm25_score, 0) AS bm25_score,
                (1.0 / (60 + s.sem_rank)) + (1.0 / (60 + COALESCE(b.bm25_rank, 9999))) AS rrf_score
@@ -198,10 +201,14 @@ async def search_obsidian_hybrid(
             "file_name": r["file_name"],
             "folder": r["folder"],
         })
+        content = r["content"]
+        ctx = r["context_prefix"]
+        display_content = f"{ctx}\n\n{content}" if ctx else content
         results.append({
             "id": r["chunk_id"],
-            "content": r["content"],
-            "text": r["content"],  # reranker expects 'text'
+            "content": display_content,
+            "text": display_content,  # reranker expects 'text'
+            "context_prefix": ctx,
             "metadata": meta,
             "semantic_score": float(r["semantic_score"]),
             "bm25_score": float(r["bm25_score"]),

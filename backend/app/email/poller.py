@@ -57,8 +57,8 @@ async def poll_mailbox(
     if not since:
         since = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
 
-    # Graph API: list messages from shared mailbox
-    url = f"{GRAPH_BASE}/users/{mailbox}/messages"
+    # Graph API: list messages from Inbox only (not SentItems/Drafts)
+    url = f"{GRAPH_BASE}/users/{mailbox}/mailFolders/Inbox/messages"
     params = {
         "$filter": f"receivedDateTime ge {since}",
         "$orderby": "receivedDateTime desc",
