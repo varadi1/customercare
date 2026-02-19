@@ -16,6 +16,7 @@ import asyncpg
 from ..rag.chunker import chunk_markdown, chunk_text
 from ..rag.embeddings import embed_texts_ingest as embed_texts
 from .enrichment import enrich_chunks_batch, ENRICHMENT_ENABLED
+from . import kg_extract
 
 PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/obsidian_rag"
 
@@ -227,6 +228,7 @@ async def ingest_vault(
         "errors": [],
         "changed_files": [],
         "new_files": [],
+        "kg_stats": {"entities": 0, "relations": 0, "files_synced": 0, "deleted_cleanup": 0},
     }
 
     for file_path in files:
@@ -255,12 +257,35 @@ async def ingest_vault(
             await _update_hash(relative_path, current_hash, chunk_count)
             stats["processed_files"] += 1
             stats["total_chunks"] += chunk_count
+
+            # Incremental KG sync for changed/new files
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                kg_result = await kg_extract.incremental_kg_update(
+                    file_path=relative_path,
+                    content=content,
+                )
+                stats["kg_stats"]["entities"] += kg_result["extracted"]["entities"]
+                stats["kg_stats"]["relations"] += kg_result["extracted"]["relations"]
+                stats["kg_stats"]["files_synced"] += 1
+            except Exception as e:
+                print(f"[obsidian-pg] KG sync failed for {relative_path} (non-fatal): {e}")
+
             if stats["processed_files"] % 50 == 0:
                 print(f"[obsidian-pg] Progress: {stats['processed_files']} files, {stats['total_chunks']} chunks")
         except Exception as e:
             error_msg = f"Failed to ingest {relative_path}: {str(e)}"
             stats["errors"].append(error_msg)
             print(f"[obsidian-pg] {error_msg}")
+
+    # KG cleanup: remove data for files no longer in vault
+    try:
+        current_paths = {str(f.relative_to(vault)) for f in files}
+        deleted_cleanup = await kg_extract.cleanup_deleted_files(current_paths)
+        stats["kg_stats"]["deleted_cleanup"] = deleted_cleanup.get("files_cleaned", 0)
+    except Exception as e:
+        print(f"[obsidian-pg] KG deleted files cleanup failed (non-fatal): {e}")
 
     # Log sync
     pool = await _get_pool()
@@ -274,8 +299,11 @@ async def ingest_vault(
         stats["errors"][:50],
     )
 
+    kg = stats["kg_stats"]
     print(f"[obsidian-pg] Ingest complete: {stats['processed_files']} files, "
-          f"{stats['total_chunks']} chunks, {len(stats['errors'])} errors")
+          f"{stats['total_chunks']} chunks, {len(stats['errors'])} errors, "
+          f"KG: {kg['files_synced']} synced, {kg['entities']}E/{kg['relations']}R extracted, "
+          f"{kg['deleted_cleanup']} deleted files cleaned")
 
     return stats
 

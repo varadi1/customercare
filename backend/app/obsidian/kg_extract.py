@@ -589,3 +589,98 @@ async def extract_vault_kg(
           f"{len(total_stats['errors'])} errors")
 
     return total_stats
+
+
+# ── Incremental KG sync (Fázis 4) ───────────────────────────────────
+
+async def cleanup_file_kg(file_path: str) -> dict[str, int]:
+    """Remove all KG data for a file (entities unique to it, relations, chunk links).
+
+    Entities shared with other files are kept; only relations sourced from this file are removed.
+    Returns cleanup stats.
+    """
+    pool = await _get_pool()
+    stats = {"relations_deleted": 0, "entities_deleted": 0, "chunk_links_deleted": 0}
+
+    # Delete relations sourced from this file
+    result = await pool.execute(
+        "DELETE FROM kg_relations WHERE source_file = $1", file_path
+    )
+    stats["relations_deleted"] = int(result.split()[-1])
+
+    # Delete chunk links for this file
+    result = await pool.execute(
+        "DELETE FROM kg_entity_chunks WHERE file_path = $1", file_path
+    )
+    stats["chunk_links_deleted"] = int(result.split()[-1])
+
+    # Delete entities that ONLY came from this file (not referenced elsewhere)
+    result = await pool.execute(
+        """DELETE FROM kg_entities
+           WHERE source_file = $1
+           AND id NOT IN (SELECT source_id FROM kg_relations)
+           AND id NOT IN (SELECT target_id FROM kg_relations)
+           AND id NOT IN (SELECT entity_id FROM kg_entity_chunks)""",
+        file_path,
+    )
+    stats["entities_deleted"] = int(result.split()[-1])
+
+    return stats
+
+
+async def incremental_kg_update(
+    file_path: str,
+    content: str,
+    chunks: list[dict] | None = None,
+    use_llm: bool = False,
+) -> dict[str, Any]:
+    """Incremental KG update for a single file: cleanup old → extract new.
+
+    Call this after a file has been ingested/re-ingested.
+    """
+    # Step 1: Clean up old KG data for this file
+    cleanup = await cleanup_file_kg(file_path)
+
+    # Step 2: Extract new KG data
+    extract = await extract_file_kg(content, file_path, chunks=chunks, use_llm=use_llm)
+
+    stats = {
+        "file": file_path,
+        "cleanup": cleanup,
+        "extracted": {"entities": extract["entities"], "relations": extract["relations"]},
+    }
+
+    print(f"[kg-sync] {file_path}: cleaned {cleanup['relations_deleted']}R/{cleanup['entities_deleted']}E, "
+          f"extracted {extract['entities']}E/{extract['relations']}R")
+
+    return stats
+
+
+async def cleanup_deleted_files(current_file_paths: set[str]) -> dict[str, int]:
+    """Remove KG data for files that no longer exist in the vault.
+
+    Args:
+        current_file_paths: Set of all current file paths in the vault.
+    """
+    pool = await _get_pool()
+
+    # Find files in KG that are no longer in vault
+    rows = await pool.fetch(
+        "SELECT DISTINCT source_file FROM kg_entities WHERE source_file IS NOT NULL"
+    )
+    kg_files = {r["source_file"] for r in rows}
+    deleted_files = kg_files - current_file_paths
+
+    total_stats = {"files_cleaned": 0, "relations_deleted": 0, "entities_deleted": 0}
+
+    for fp in deleted_files:
+        cleanup = await cleanup_file_kg(fp)
+        total_stats["files_cleaned"] += 1
+        total_stats["relations_deleted"] += cleanup["relations_deleted"]
+        total_stats["entities_deleted"] += cleanup["entities_deleted"]
+
+    if total_stats["files_cleaned"]:
+        print(f"[kg-sync] Cleaned {total_stats['files_cleaned']} deleted files: "
+              f"{total_stats['entities_deleted']}E, {total_stats['relations_deleted']}R removed")
+
+    return total_stats
