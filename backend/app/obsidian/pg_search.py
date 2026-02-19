@@ -284,7 +284,29 @@ async def search_obsidian_hybrid(
         method = "hybrid+graph+rerank"
 
     _log_search(query, len(formatted), folder_filter, caller, method)
-    return formatted
+
+    # Build graph_context for the response
+    graph_context = None
+    if graph_info and graph_info["matched_entities"]:
+        graph_context = {
+            "matched_entities": [
+                {"name": e["name"], "type": e["type"], "similarity": round(e["similarity"], 3)}
+                for e in graph_info["matched_entities"]
+            ],
+            "related_entities": [
+                {
+                    "name": e["name"],
+                    "type": e["type"],
+                    "relation": e["relation_type"],
+                    "from": e["from_entity"],
+                    "confidence": round(e["confidence"], 2),
+                }
+                for e in graph_info["related_entities"]
+            ],
+            "graph_file_paths": graph_info["graph_file_paths"],
+        }
+
+    return {"results": formatted, "graph_context": graph_context}
 
 
 async def get_obsidian_stats(collection_name: str = "obsidian_notes") -> dict[str, Any]:

@@ -611,7 +611,7 @@ async def search_obsidian_hybrid(
         graph: Whether to use Knowledge Graph expansion (default True)
     """
     try:
-        results = await obsidian_search.search_obsidian_hybrid(
+        search_result = await obsidian_search.search_obsidian_hybrid(
             query=q,
             limit=limit,
             folder_filter=folder,
@@ -621,6 +621,9 @@ async def search_obsidian_hybrid(
             instruction=instruction,
             use_graph=graph,
         )
+        results = search_result["results"]
+        graph_context = search_result.get("graph_context")
+
         if compact:
             for r in results:
                 if "content" in r and len(r["content"]) > 200:
@@ -633,7 +636,7 @@ async def search_obsidian_hybrid(
         if rerank:
             method += "+rerank"
 
-        return {
+        response = {
             "results": results,
             "query": q,
             "total_found": len(results),
@@ -642,6 +645,10 @@ async def search_obsidian_hybrid(
             "compact": compact,
             "graph_boosted_count": graph_boosted,
         }
+        if graph_context:
+            response["graph_context"] = graph_context
+
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
