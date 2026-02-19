@@ -1,5 +1,6 @@
 """Hanna Backend — FastAPI REST API for RAG + Email."""
 
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from .rag import reranker
 from .email import poller, drafts, history, attachments, feedback, templates
 from .obsidian import pg_ingest as obsidian_ingest
 from .obsidian import pg_search as obsidian_search
+from .obsidian import kg_extract
 from . import analytics
 
 
@@ -660,3 +662,136 @@ async def obsidian_last_sync():
         return await obsidian_ingest.get_last_sync_info()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Knowledge Graph endpoints ────────────────────────────────────────
+
+@app.post("/obsidian/graph/extract")
+async def kg_extract_vault(
+    vault_path: str = "/app/obsidian-vault",
+    use_llm: bool = False,
+    limit: int | None = None,
+):
+    """Run KG entity/relation extraction across the vault."""
+    try:
+        stats = await kg_extract.extract_vault_kg(vault_path, use_llm=use_llm, limit=limit)
+        return {"status": "ok", **stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/obsidian/graph/entity")
+async def kg_search_entity(q: str, type: str | None = None, limit: int = 20):
+    """Search entities by name (fuzzy trigram match)."""
+    pool = await kg_extract._get_pool()
+    type_clause = "AND type = $2" if type else ""
+    params = [q]
+    if type:
+        params.append(type)
+    params.append(limit)
+    limit_param = f"${len(params)}"
+
+    rows = await pool.fetch(
+        f"""SELECT id, name, type, aliases, metadata, source_file,
+                   similarity(name, $1) AS sim
+            FROM kg_entities
+            WHERE similarity(name, $1) > 0.15 {type_clause}
+            ORDER BY similarity(name, $1) DESC
+            LIMIT {limit_param}""",
+        *params,
+    )
+    return {
+        "query": q,
+        "results": [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "type": r["type"],
+                "aliases": r["aliases"],
+                "metadata": json.loads(r["metadata"]) if r["metadata"] else {},
+                "source_file": r["source_file"],
+                "similarity": round(float(r["sim"]), 3),
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.get("/obsidian/graph/relations")
+async def kg_get_relations(
+    entity_id: int | None = None,
+    entity_name: str | None = None,
+    relation_type: str | None = None,
+    limit: int = 50,
+):
+    """Get relations for an entity (by ID or name)."""
+    pool = await kg_extract._get_pool()
+
+    if entity_id:
+        rows = await pool.fetch(
+            """SELECT r.id, r.relation_type, r.confidence, r.source_file,
+                      s.name AS source_name, s.type AS source_type,
+                      t.name AS target_name, t.type AS target_type
+               FROM kg_relations r
+               JOIN kg_entities s ON s.id = r.source_id
+               JOIN kg_entities t ON t.id = r.target_id
+               WHERE r.source_id = $1 OR r.target_id = $1
+               ORDER BY r.confidence DESC
+               LIMIT $2""",
+            entity_id, limit,
+        )
+    elif entity_name:
+        rows = await pool.fetch(
+            """SELECT r.id, r.relation_type, r.confidence, r.source_file,
+                      s.name AS source_name, s.type AS source_type,
+                      t.name AS target_name, t.type AS target_type
+               FROM kg_relations r
+               JOIN kg_entities s ON s.id = r.source_id
+               JOIN kg_entities t ON t.id = r.target_id
+               WHERE s.name ILIKE $1 OR t.name ILIKE $1
+               ORDER BY r.confidence DESC
+               LIMIT $2""",
+            f"%{entity_name}%", limit,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Provide entity_id or entity_name")
+
+    type_filter = relation_type
+    results = []
+    for r in rows:
+        if type_filter and r["relation_type"] != type_filter:
+            continue
+        results.append({
+            "id": r["id"],
+            "source": {"name": r["source_name"], "type": r["source_type"]},
+            "target": {"name": r["target_name"], "type": r["target_type"]},
+            "relation_type": r["relation_type"],
+            "confidence": round(float(r["confidence"]), 2),
+            "source_file": r["source_file"],
+        })
+
+    return {"results": results, "total": len(results)}
+
+
+@app.get("/obsidian/graph/stats")
+async def kg_stats():
+    """Get Knowledge Graph statistics."""
+    pool = await kg_extract._get_pool()
+    entities = await pool.fetchval("SELECT COUNT(*) FROM kg_entities")
+    relations = await pool.fetchval("SELECT COUNT(*) FROM kg_relations")
+    entity_chunks = await pool.fetchval("SELECT COUNT(*) FROM kg_entity_chunks")
+
+    type_counts = await pool.fetch(
+        "SELECT type, COUNT(*) AS cnt FROM kg_entities GROUP BY type ORDER BY cnt DESC"
+    )
+    relation_counts = await pool.fetch(
+        "SELECT relation_type, COUNT(*) AS cnt FROM kg_relations GROUP BY relation_type ORDER BY cnt DESC"
+    )
+
+    return {
+        "entities": entities,
+        "relations": relations,
+        "entity_chunk_links": entity_chunks,
+        "entity_types": {r["type"]: r["cnt"] for r in type_counts},
+        "relation_types": {r["relation_type"]: r["cnt"] for r in relation_counts},
+    }
