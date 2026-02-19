@@ -32,6 +32,7 @@ from .obsidian import pg_ingest as obsidian_ingest
 from .obsidian import pg_search as obsidian_search
 from .obsidian import kg_extract
 from .obsidian import kg_search as obsidian_kg_search
+from .obsidian import cross_rag_enrich
 from . import analytics
 
 
@@ -843,5 +844,30 @@ async def kg_graph_search(
             "total_chunks": len(result["graph_chunks"]),
             "total_entities": len(result["matched_entities"]) + len(result["related_entities"]),
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Cross-RAG Entity Enrichment ──────────────────────────────────────────
+@app.post("/obsidian/enrich-from-klara")
+async def enrich_from_klara(
+    since_hours: int = 0,
+    min_relations: int = 2,
+    dry_run: bool = False,
+):
+    """Cross-RAG enrichment: sync Klára NEÜ docs KG entities → Obsidian People/Companies.
+
+    Args:
+        since_hours: Look at entities from last N hours (0=all)
+        min_relations: Minimum relations to create new files
+        dry_run: Preview changes without writing
+    """
+    try:
+        result = await cross_rag_enrich.enrich_from_klara(
+            since_hours=since_hours,
+            min_relations=min_relations,
+            dry_run=dry_run,
+        )
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
