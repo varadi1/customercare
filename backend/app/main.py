@@ -788,15 +788,16 @@ async def kg_extract_vault(
 
 @app.get("/obsidian/graph/entity")
 async def kg_search_entity(q: str, type: str | None = None, limit: int = 20):
-    """Search entities by name (fuzzy trigram match)."""
+    """Search entities by name (trigram + ILIKE + alias matching)."""
     pool = await kg_extract._get_pool()
-    type_clause = "AND type = $2" if type else ""
+    type_clause = "AND e.type = $2" if type else ""
     params = [q]
     if type:
         params.append(type)
     params.append(limit)
     limit_param = f"${len(params)}"
 
+    # Strategy 1: Trigram similarity
     rows = await pool.fetch(
         f"""SELECT e.id, e.name, e.type, e.aliases, e.metadata, e.source_file,
                    similarity(e.name, $1) AS sim,
@@ -808,6 +809,61 @@ async def kg_search_entity(q: str, type: str | None = None, limit: int = 20):
             LIMIT {limit_param}""",
         *params,
     )
+    
+    seen = {}
+    for r in rows:
+        seen[r["id"]] = r
+
+    # Strategy 2: ILIKE fallback (short names like Kbt., NEÜ, OETP)
+    if len(q) >= 3:
+        ilike_params = [f"%{q}%"]
+        ilike_type_clause = "AND e.type = $2" if type else ""
+        if type:
+            ilike_params.append(type)
+        ilike_params.append(limit)
+        ilike_limit = f"${len(ilike_params)}"
+
+        ilike_rows = await pool.fetch(
+            f"""SELECT e.id, e.name, e.type, e.aliases, e.metadata, e.source_file,
+                       0.6::float AS sim,
+                       (SELECT COUNT(*) FROM kg_relations r WHERE r.source_id = e.id OR r.target_id = e.id) AS relation_count,
+                       (SELECT COUNT(*) FROM kg_entity_chunks ec WHERE ec.entity_id = e.id) AS chunk_count
+                FROM kg_entities e
+                WHERE e.name ILIKE $1 {ilike_type_clause}
+                LIMIT {ilike_limit}""",
+            *ilike_params,
+        )
+        for r in ilike_rows:
+            if r["id"] not in seen:
+                seen[r["id"]] = r
+
+    # Strategy 3: Alias matching
+    if len(q) >= 3:
+        alias_params = [f"%{q}%"]
+        alias_type_clause = "AND e.type = $2" if type else ""
+        if type:
+            alias_params.append(type)
+        alias_params.append(limit)
+        alias_limit = f"${len(alias_params)}"
+
+        alias_rows = await pool.fetch(
+            f"""SELECT e.id, e.name, e.type, e.aliases, e.metadata, e.source_file,
+                       0.85::float AS sim,
+                       (SELECT COUNT(*) FROM kg_relations r WHERE r.source_id = e.id OR r.target_id = e.id) AS relation_count,
+                       (SELECT COUNT(*) FROM kg_entity_chunks ec WHERE ec.entity_id = e.id) AS chunk_count
+                FROM kg_entities e
+                WHERE EXISTS (SELECT 1 FROM unnest(e.aliases) a WHERE a ILIKE $1)
+                {alias_type_clause}
+                LIMIT {alias_limit}""",
+            *alias_params,
+        )
+        for r in alias_rows:
+            if r["id"] not in seen:
+                seen[r["id"]] = r
+
+    # Sort by similarity, limit
+    results = sorted(seen.values(), key=lambda r: float(r["sim"]), reverse=True)[:limit]
+
     return {
         "query": q,
         "results": [
@@ -822,7 +878,7 @@ async def kg_search_entity(q: str, type: str | None = None, limit: int = 20):
                 "relation_count": r["relation_count"],
                 "chunk_count": r["chunk_count"],
             }
-            for r in rows
+            for r in results
         ],
     }
 
@@ -1103,7 +1159,7 @@ async def kg_entity_chunks(entity_id: int, limit: int = 20):
         raise HTTPException(status_code=404, detail="Entity not found")
 
     rows = await pool.fetch(
-        """SELECT c.chunk_id, substring(c.content from 1 for 300) AS snippet, c.file_path, c.file_name,
+        """SELECT c.chunk_id, c.file_path, c.file_name,
                   c.folder, ec.mention_type, c.context_prefix
            FROM kg_entity_chunks ec
            JOIN obsidian_chunks c ON c.chunk_id = ec.chunk_id
@@ -1113,12 +1169,27 @@ async def kg_entity_chunks(entity_id: int, limit: int = 20):
         entity_id, limit,
     )
 
+    # Fetch content snippets separately with error handling
+    chunk_ids = [r["chunk_id"] for r in rows]
+    snippets = {}
+    if chunk_ids:
+        try:
+            snippet_rows = await pool.fetch(
+                """SELECT chunk_id, encode(substring(content::bytea from 1 for 300), 'escape') AS snippet
+                   FROM obsidian_chunks WHERE chunk_id = ANY($1::text[])""",
+                chunk_ids,
+            )
+            snippets = {r["chunk_id"]: r["snippet"] for r in snippet_rows}
+        except Exception:
+            # Fallback: no snippets
+            pass
+
     return {
         "entity": {"id": entity["id"], "name": entity["name"], "type": entity["type"]},
         "chunks": [
             {
                 "chunk_id": r["chunk_id"],
-                "snippet": r["snippet"],
+                "snippet": snippets.get(r["chunk_id"], ""),
                 "file_path": r["file_path"],
                 "file_name": r["file_name"],
                 "folder": r["folder"],
