@@ -116,8 +116,10 @@ async def create_reply_draft(
         }
         banner = confidence_banner.get(confidence, confidence_banner["medium"])
 
+        # Ensure proper UTF-8 encoding for Hungarian characters
+        meta_charset = '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">'
         # Prepend our response before the original quoted email
-        full_body = f"{banner}\n{body_html}\n<br/>\n<hr/>\n{original_body}"
+        full_body = f"{meta_charset}\n{banner}\n{body_html}\n<br/>\n<hr/>\n{original_body}"
 
         update_url = f"{GRAPH_BASE}/users/{mailbox}/messages/{draft_id}"
         update_resp = await client.patch(

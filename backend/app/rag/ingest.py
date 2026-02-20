@@ -52,6 +52,20 @@ def ingest_text(
         for chunk in chunks
     ]
 
+    # Auto-supersede: if supersedes is set, invalidate the old source
+    if supersedes:
+        try:
+            collection = get_collection()
+            old = collection.get(where={"source": supersedes}, include=["metadatas"])
+            if old["ids"]:
+                for meta in old["metadatas"]:
+                    meta["valid_to"] = valid_from or date.today().isoformat()
+                    meta["superseded_by"] = source
+                collection.update(ids=old["ids"], metadatas=old["metadatas"])
+                print(f"[ingest] Auto-superseded {len(old['ids'])} chunks from '{supersedes}'")
+        except Exception as e:
+            print(f"[ingest] Supersede warning (non-fatal): {e}")
+
     # Embed the ENRICHED chunks (but store original text in ChromaDB)
     embeddings = embed_texts(enriched_chunks)
 

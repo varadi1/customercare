@@ -5,24 +5,25 @@ from __future__ import annotations
 # Authority weights by chunk_type
 # Higher = more authoritative (0.0 - 1.0)
 AUTHORITY_WEIGHTS: dict[str, float] = {
-    # Official program documents
+    # Official program documents — always preferred
     "palyazat_felhivas": 1.00,      # Pályázati felhívás — THE source of truth
     "palyazat_melleklet": 0.95,     # Felhívás mellékletei
-    "kozlemeny": 0.85,              # Hivatalos közlemények
-    "gyik": 0.80,                   # GYIK — curated Q&A
-    "segedlet": 0.75,               # Segédletek, útmutatók
+    "kozlemeny": 0.90,              # Hivatalos közlemények (↑ volt 0.85)
+    "gyik": 0.85,                   # GYIK — curated Q&A (↑ volt 0.80)
+    "segedlet": 0.80,               # Segédletek, útmutatók (↑ volt 0.75)
     
-    # Internal knowledge
-    "document": 0.65,               # Általános dokumentumok
-    "general": 0.60,                # Egyéb
+    # Internal knowledge — lower priority
+    "document": 0.55,               # Általános dokumentumok (↓ volt 0.65, EU közlemény ide esik)
+    "general": 0.50,                # Egyéb (↓ volt 0.60)
     
-    # Email-based knowledge (useful but not authoritative)
-    "email_reply": 0.50,            # Korábbi email válaszok
-    "email_qa": 0.50,               # Email Q&A párok
+    # Email-based knowledge — useful patterns but NOT authoritative
+    "email_reply": 0.40,            # Korábbi email válaszok (↓ volt 0.50)
+    "email_qa": 0.40,               # Email Q&A párok (↓ volt 0.50)
+    "email_question": 0.30,         # Beérkezett kérdések (legalacsonyabb)
 }
 
 # Default weight for unknown chunk types
-DEFAULT_WEIGHT = 0.55
+DEFAULT_WEIGHT = 0.45
 
 # How much authority affects the final score (0 = no effect, 1 = full effect)
 AUTHORITY_INFLUENCE = 0.40

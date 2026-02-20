@@ -75,7 +75,7 @@ async def poll_mailbox(
         "$filter": f"receivedDateTime ge {since}",
         "$orderby": "receivedDateTime desc",
         "$top": limit,
-        "$select": "id,subject,from,body,receivedDateTime,conversationId,importance,hasAttachments,internetMessageHeaders",
+        "$select": "id,subject,from,body,receivedDateTime,conversationId,importance,hasAttachments,internetMessageHeaders,categories",
     }
 
     messages = []
@@ -116,6 +116,7 @@ async def poll_mailbox(
                     importance=msg.get("importance", "normal"),
                     oetp_ids=oetp_ids,
                     pod_numbers=pod_numbers,
+                    categories=msg.get("categories", []),
                 ))
         else:
             print(f"[poller] Error fetching {mailbox}: {resp.status_code} {resp.text}")

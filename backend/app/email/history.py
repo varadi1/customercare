@@ -165,6 +165,14 @@ async def ingest_historical_emails(
                 stats["skipped_short"] += 1
                 continue
 
+            # Skip signature-only emails (no real content beyond NEÜ signature)
+            sig_patterns = ["Nemzeti Energetikai Ügynökség", "Montevideo u.", "1037- Budapest"]
+            content_lines = [l.strip() for l in body_text.split("\n") 
+                           if l.strip() and not any(p in l for p in sig_patterns) and len(l.strip()) > 10]
+            if len(" ".join(content_lines)) < 50:
+                stats["skipped_short"] += 1
+                continue
+
             # Skip true duplicates: same answer content (first 500 chars of body)
             # This allows different answers with the same subject to be ingested
             content_hash = _hashlib.sha256(body_text[:500].encode()).hexdigest()[:16]

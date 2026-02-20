@@ -59,6 +59,9 @@ async def build_draft_context(
     style_guide = _build_style_guide(patterns, category)
 
     # 5. Build response
+    # Determine if legal/business context is needed (→ suggest Réka consultation)
+    needs_legal = _needs_legal_context(category, email_text, rag_results)
+
     return {
         "rag_results": [
             {
@@ -86,6 +89,42 @@ async def build_draft_context(
             "pod_numbers": pod_numbers or [],
             "has_identifiers": bool(oetp_ids or pod_numbers),
         },
+        "needs_legal_context": needs_legal,
+    }
+
+
+def _needs_legal_context(category: str, email_text: str, rag_results: list) -> dict:
+    """Determine if Réka (legal RAG) should be consulted."""
+    text_lower = email_text.lower()
+
+    legal_keywords = [
+        "vállalkozás", "vállalkozó", "egyéni vállalkozás", "kft", "bt", "zrt",
+        "gazdasági tevékenység", "székhelye", "telephelye", "fióktelepe",
+        "de minimis", "gber", "állami támogatás", "közbeszerzés",
+        "jogszabály", "rendelet", "törvény", "közlemény",
+        "adózás", "áfa", "szja", "társasági adó",
+        "örökl", "haszonélvez", "tulajdonjog", "végrehajtás",
+    ]
+
+    matched_keywords = [kw for kw in legal_keywords if kw in text_lower]
+    legal_categories = {"gazdasági_tevékenység", "jogosultsag"}
+    
+    # Check if RAG results reference EU documents
+    has_eu_source = any(
+        "EU_Bizottsag" in r.get("source", "") or "eu_rendelet" in r.get("chunk_type", "")
+        for r in rag_results
+    )
+
+    should_consult = (
+        category in legal_categories
+        or len(matched_keywords) >= 2
+        or has_eu_source
+    )
+
+    return {
+        "should_consult_reka": should_consult,
+        "reason": f"Keywords: {matched_keywords[:5]}" if matched_keywords else ("EU source" if has_eu_source else "category match" if category in legal_categories else ""),
+        "suggested_query": email_text[:300] if should_consult else "",
     }
 
 
