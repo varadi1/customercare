@@ -27,7 +27,7 @@ from .rag import search as rag_search
 from .rag import ingest as rag_ingest
 from .rag.bm25 import BM25Index
 from .rag import reranker
-from .email import poller, drafts, history, attachments, feedback, templates
+from .email import poller, drafts, history, attachments, feedback, templates, style_learner, draft_context
 from .obsidian import pg_ingest as obsidian_ingest
 from .obsidian import pg_search as obsidian_search
 from .obsidian import kg_extract
@@ -299,10 +299,22 @@ async def poll_emails(hours: float | None = None):
 
 
 @app.get("/emails/thread/{mailbox}/{conversation_id}")
-async def get_thread(mailbox: str, conversation_id: str):
-    """Get full email thread by conversation ID."""
+async def get_thread(
+    mailbox: str,
+    conversation_id: str,
+    subject: str | None = None,
+    sender_email: str | None = None,
+):
+    """Get full email thread by conversation ID (with subject+sender fallback).
+
+    If conversationId filter fails on the shared mailbox, falls back to
+    subject-based search across Inbox + SentItems + Drafts.
+    """
     try:
-        messages = await poller.get_email_thread(mailbox, conversation_id)
+        messages = await poller.get_email_thread(
+            mailbox, conversation_id,
+            subject=subject, sender_email=sender_email,
+        )
         return {"messages": [m.model_dump() for m in messages], "count": len(messages)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -344,6 +356,34 @@ async def mark_sent_endpoint(mailbox: str, hours: int = 4):
     try:
         result = await drafts.mark_sent_emails(mailbox, hours)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Draft Context ────────────────────────────────────────────────────────────
+
+class DraftContextRequest(BaseModel):
+    email_text: str
+    email_subject: str = ""
+    oetp_ids: list[str] = []
+    pod_numbers: list[str] = []
+    top_k: int = 5
+
+
+@app.post("/draft/context")
+async def get_draft_context(req: DraftContextRequest):
+    """Get full draft context: RAG + style guide + examples + identifiers.
+    
+    Single call that gives everything needed to write a style-matched draft.
+    """
+    try:
+        return await draft_context.build_draft_context(
+            email_text=req.email_text,
+            email_subject=req.email_subject,
+            oetp_ids=req.oetp_ids,
+            pod_numbers=req.pod_numbers,
+            top_k=req.top_k,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -462,6 +502,51 @@ async def analyze_email_images(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Style Learning ───────────────────────────────────────────────────────────
+
+@app.get("/style/analyze")
+async def analyze_style(
+    mailbox: str = "lakossagitarolo@neuzrt.hu",
+    hours: int = 168,
+    limit: int = 200,
+):
+    """Analyze colleague sent email style patterns.
+    
+    Returns word count stats, tone markers, greetings, closings,
+    and per-category examples.
+    """
+    try:
+        return await style_learner.analyze_sent_items(
+            mailbox=mailbox, hours=hours, limit=limit,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/style/templates")
+async def get_style_templates(
+    mailbox: str = "lakossagitarolo@neuzrt.hu",
+    hours: int = 720,
+    min_examples: int = 3,
+):
+    """Build response templates from colleague sent items per topic category."""
+    try:
+        return await style_learner.get_category_templates(
+            mailbox=mailbox, hours=hours, min_examples=min_examples,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/style/patterns")
+async def get_saved_patterns():
+    """Get last saved style patterns (from disk cache)."""
+    patterns = style_learner.load_patterns()
+    if not patterns:
+        return {"status": "no_patterns", "message": "Run /style/analyze first"}
+    return patterns
 
 
 # ─── Templates ────────────────────────────────────────────────────────────────

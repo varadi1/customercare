@@ -87,6 +87,9 @@ class EmailMessage(BaseModel):
     mailbox: str  # which shared mailbox
     has_attachments: bool = False
     importance: str = "normal"
+    # Auto-extracted identifiers
+    oetp_ids: list[str] = Field(default_factory=list)  # e.g. ["OETP-2026-123456"]
+    pod_numbers: list[str] = Field(default_factory=list)  # e.g. ["HU-ELMU-xxx"]
 
 
 class EmailThread(BaseModel):
