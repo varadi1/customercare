@@ -798,11 +798,13 @@ async def kg_search_entity(q: str, type: str | None = None, limit: int = 20):
     limit_param = f"${len(params)}"
 
     rows = await pool.fetch(
-        f"""SELECT id, name, type, aliases, metadata, source_file,
-                   similarity(name, $1) AS sim
-            FROM kg_entities
-            WHERE similarity(name, $1) > 0.15 {type_clause}
-            ORDER BY similarity(name, $1) DESC
+        f"""SELECT e.id, e.name, e.type, e.aliases, e.metadata, e.source_file,
+                   similarity(e.name, $1) AS sim,
+                   (SELECT COUNT(*) FROM kg_relations r WHERE r.source_id = e.id OR r.target_id = e.id) AS relation_count,
+                   (SELECT COUNT(*) FROM kg_entity_chunks ec WHERE ec.entity_id = e.id) AS chunk_count
+            FROM kg_entities e
+            WHERE similarity(e.name, $1) > 0.15 {type_clause}
+            ORDER BY similarity(e.name, $1) DESC
             LIMIT {limit_param}""",
         *params,
     )
@@ -817,6 +819,8 @@ async def kg_search_entity(q: str, type: str | None = None, limit: int = 20):
                 "metadata": json.loads(r["metadata"]) if r["metadata"] else {},
                 "source_file": r["source_file"],
                 "similarity": round(float(r["sim"]), 3),
+                "relation_count": r["relation_count"],
+                "chunk_count": r["chunk_count"],
             }
             for r in rows
         ],
@@ -931,6 +935,200 @@ async def kg_graph_search(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Graph: Neighbors (depth-aware) ────────────────────────────────────────
+@app.get("/obsidian/graph/neighbors/{entity_id}")
+async def kg_neighbors(entity_id: int, depth: int = 1, type: str | None = None, limit: int = 50):
+    """Get neighboring entities via relations, with configurable depth (max 2)."""
+    if depth < 1 or depth > 2:
+        raise HTTPException(status_code=400, detail="depth must be 1 or 2")
+    pool = await kg_extract._get_pool()
+
+    # Verify entity exists
+    entity = await pool.fetchrow("SELECT id, name, type, aliases FROM kg_entities WHERE id = $1", entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    type_clause = "AND e.type = $3" if type else ""
+    params_base = [entity_id, limit] + ([type] if type else [])
+
+    # Depth 1: direct neighbors
+    rows = await pool.fetch(
+        f"""WITH neighbors AS (
+            SELECT DISTINCT ON (e.id)
+                e.id, e.name, e.type, e.aliases,
+                r.relation_type,
+                CASE WHEN r.source_id = $1 THEN 'outgoing' ELSE 'incoming' END AS direction,
+                1 AS depth
+            FROM kg_relations r
+            JOIN kg_entities e ON e.id = CASE WHEN r.source_id = $1 THEN r.target_id ELSE r.source_id END
+            WHERE (r.source_id = $1 OR r.target_id = $1)
+            {type_clause}
+            ORDER BY e.id
+            LIMIT $2
+        )
+        SELECT * FROM neighbors""",
+        *params_base,
+    )
+    results = [dict(r) for r in rows]
+
+    if depth == 2 and results:
+        depth1_ids = [r["id"] for r in results]
+        # Depth 2: neighbors of neighbors (exclude original entity and depth-1)
+        exclude_ids = [entity_id] + depth1_ids
+        d2_rows = await pool.fetch(
+            f"""SELECT DISTINCT ON (e.id)
+                e.id, e.name, e.type, e.aliases,
+                r.relation_type,
+                CASE WHEN r.source_id = ANY($1) THEN 'outgoing' ELSE 'incoming' END AS direction,
+                2 AS depth
+            FROM kg_relations r
+            JOIN kg_entities e ON e.id = CASE WHEN r.source_id = ANY($1) THEN r.target_id ELSE r.source_id END
+            WHERE (r.source_id = ANY($1) OR r.target_id = ANY($1))
+            AND e.id != ALL($2)
+            {type_clause.replace('$3', '$4') if type else ''}
+            ORDER BY e.id
+            LIMIT $3""",
+            depth1_ids, exclude_ids, limit, *([type] if type else []),
+        )
+        results.extend(dict(r) for r in d2_rows)
+
+    return {
+        "entity": {"id": entity["id"], "name": entity["name"], "type": entity["type"]},
+        "neighbors": [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "type": r["type"],
+                "aliases": r["aliases"],
+                "relation_type": r["relation_type"],
+                "direction": r["direction"],
+                "depth": r["depth"],
+            }
+            for r in results
+        ],
+        "total": len(results),
+    }
+
+
+# ── Graph: Shortest Path ─────────────────────────────────────────────────
+@app.get("/obsidian/graph/path")
+async def kg_shortest_path(from_id: int, to_id: int, max_depth: int = 4):
+    """Find shortest path between two entities via BFS (max depth 4)."""
+    if max_depth < 1 or max_depth > 4:
+        raise HTTPException(status_code=400, detail="max_depth must be 1-4")
+    pool = await kg_extract._get_pool()
+
+    # Verify both entities exist
+    from_ent = await pool.fetchrow("SELECT id, name, type FROM kg_entities WHERE id = $1", from_id)
+    to_ent = await pool.fetchrow("SELECT id, name, type FROM kg_entities WHERE id = $1", to_id)
+    if not from_ent or not to_ent:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    if from_id == to_id:
+        return {"path": [{"id": from_ent["id"], "name": from_ent["name"], "type": from_ent["type"]}], "edges": [], "depth": 0}
+
+    # BFS
+    from collections import deque
+    visited = {from_id: None}  # entity_id → (prev_entity_id, relation_type, direction)
+    queue = deque([from_id])
+    found = False
+
+    for current_depth in range(max_depth):
+        if found:
+            break
+        next_queue = deque()
+        while queue:
+            node = queue.popleft()
+            rels = await pool.fetch(
+                """SELECT source_id, target_id, relation_type
+                   FROM kg_relations WHERE source_id = $1 OR target_id = $1""",
+                node,
+            )
+            for r in rels:
+                neighbor = r["target_id"] if r["source_id"] == node else r["source_id"]
+                if neighbor not in visited:
+                    direction = "outgoing" if r["source_id"] == node else "incoming"
+                    visited[neighbor] = (node, r["relation_type"], direction)
+                    if neighbor == to_id:
+                        found = True
+                        break
+                    next_queue.append(neighbor)
+            if found:
+                break
+        queue = next_queue
+
+    if not found:
+        return {"path": [], "edges": [], "depth": -1, "message": "No path found"}
+
+    # Reconstruct path
+    path_ids = []
+    edges = []
+    current = to_id
+    while current is not None:
+        path_ids.append(current)
+        info = visited[current]
+        if info is not None:
+            prev, rel_type, direction = info
+            edges.append({"relation_type": rel_type, "direction": direction})
+            current = prev
+        else:
+            current = None
+    path_ids.reverse()
+    edges.reverse()
+
+    # Fetch entity details
+    entities = await pool.fetch(
+        "SELECT id, name, type FROM kg_entities WHERE id = ANY($1)",
+        path_ids,
+    )
+    ent_map = {e["id"]: {"id": e["id"], "name": e["name"], "type": e["type"]} for e in entities}
+
+    return {
+        "path": [ent_map.get(eid, {"id": eid}) for eid in path_ids],
+        "edges": edges,
+        "depth": len(edges),
+    }
+
+
+# ── Graph: Entity Chunks ─────────────────────────────────────────────────
+@app.get("/obsidian/graph/entity/{entity_id}/chunks")
+async def kg_entity_chunks(entity_id: int, limit: int = 20):
+    """Get chunks linked to an entity via kg_entity_chunks."""
+    pool = await kg_extract._get_pool()
+
+    entity = await pool.fetchrow("SELECT id, name, type FROM kg_entities WHERE id = $1", entity_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Entity not found")
+
+    rows = await pool.fetch(
+        """SELECT c.chunk_id, left(c.content, 300) AS snippet, c.file_path, c.file_name,
+                  c.folder, ec.mention_type, c.context_prefix
+           FROM kg_entity_chunks ec
+           JOIN obsidian_chunks c ON c.chunk_id = ec.chunk_id
+           WHERE ec.entity_id = $1
+           ORDER BY ec.mention_type, c.file_path
+           LIMIT $2""",
+        entity_id, limit,
+    )
+
+    return {
+        "entity": {"id": entity["id"], "name": entity["name"], "type": entity["type"]},
+        "chunks": [
+            {
+                "chunk_id": r["chunk_id"],
+                "snippet": r["snippet"],
+                "file_path": r["file_path"],
+                "file_name": r["file_name"],
+                "folder": r["folder"],
+                "mention_type": r["mention_type"],
+                "context_prefix": r["context_prefix"],
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
 
 
 # ── Cross-RAG Entity Enrichment ──────────────────────────────────────────
