@@ -1103,7 +1103,7 @@ async def kg_entity_chunks(entity_id: int, limit: int = 20):
         raise HTTPException(status_code=404, detail="Entity not found")
 
     rows = await pool.fetch(
-        """SELECT c.chunk_id, left(c.content, 300) AS snippet, c.file_path, c.file_name,
+        """SELECT c.chunk_id, substring(c.content from 1 for 300) AS snippet, c.file_path, c.file_name,
                   c.folder, ec.mention_type, c.context_prefix
            FROM kg_entity_chunks ec
            JOIN obsidian_chunks c ON c.chunk_id = ec.chunk_id
