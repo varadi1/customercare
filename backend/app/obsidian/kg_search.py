@@ -43,8 +43,8 @@ async def detect_entities(query: str, threshold: float = 0.25, limit: int = 5) -
             candidates.append(f"{words[i]} {words[i+1]}")
         if i + 2 < len(words):
             candidates.append(f"{words[i]} {words[i+1]} {words[i+2]}")
-        # Single words (only if 4+ chars to avoid noise)
-        if len(words[i]) >= 4:
+        # Single words (3+ chars — allows NEÜ, OETP, GBER etc.)
+        if len(words[i]) >= 3:
             candidates.append(words[i])
 
     # Deduplicate
@@ -56,9 +56,10 @@ async def detect_entities(query: str, threshold: float = 0.25, limit: int = 5) -
             seen.add(cl)
             unique_candidates.append(c)
 
-    matched = {}  # name → entity dict (keep highest similarity)
+    matched = {}  # (name, type) → entity dict (keep highest similarity)
 
     for candidate in unique_candidates:
+        # Strategy 1: Trigram similarity on name
         rows = await pool.fetch(
             """SELECT id, name, type, aliases,
                       similarity(name, $1) AS sim
@@ -78,6 +79,46 @@ async def detect_entities(query: str, threshold: float = 0.25, limit: int = 5) -
                     "type": r["type"],
                     "similarity": sim,
                 }
+
+        # Strategy 2: ILIKE fallback (catches short names like OETP, NEÜ, GBER)
+        if len(candidate) >= 3:
+            ilike_rows = await pool.fetch(
+                """SELECT id, name, type, aliases
+                   FROM kg_entities
+                   WHERE name ILIKE $1
+                   LIMIT $2""",
+                f"%{candidate}%", limit,
+            )
+            for r in ilike_rows:
+                key = (r["name"], r["type"])
+                if key not in matched:
+                    matched[key] = {
+                        "id": r["id"],
+                        "name": r["name"],
+                        "type": r["type"],
+                        "similarity": 0.9 if candidate.lower() == r["name"].lower() else 0.6,
+                    }
+
+        # Strategy 3: Alias matching
+        if len(candidate) >= 3:
+            alias_rows = await pool.fetch(
+                """SELECT id, name, type, aliases
+                   FROM kg_entities
+                   WHERE EXISTS (
+                       SELECT 1 FROM unnest(aliases) a WHERE a ILIKE $1
+                   )
+                   LIMIT $2""",
+                f"%{candidate}%", limit,
+            )
+            for r in alias_rows:
+                key = (r["name"], r["type"])
+                if key not in matched:
+                    matched[key] = {
+                        "id": r["id"],
+                        "name": r["name"],
+                        "type": r["type"],
+                        "similarity": 0.85,  # alias match = high confidence
+                    }
 
     # Sort by similarity descending, limit
     results = sorted(matched.values(), key=lambda x: x["similarity"], reverse=True)
