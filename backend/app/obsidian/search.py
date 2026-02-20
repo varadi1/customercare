@@ -277,8 +277,9 @@ async def search_obsidian_hybrid(
     caller: str | None = None,
     use_reranker: bool = True,
     instruction: str = "",
-) -> list[dict[str, Any]]:
-    """Hybrid search: semantic + BM25 → RRF fusion → reranking.
+    use_graph: bool = True,
+) -> dict[str, Any]:
+    """Hybrid search: semantic + BM25 + optional Knowledge Graph → RRF fusion → reranking.
     
     Args:
         query: Search query
@@ -288,9 +289,10 @@ async def search_obsidian_hybrid(
         caller: Who made the search (bob, max, eve)
         use_reranker: Whether to apply reranking (default True)
         instruction: Custom instruction for reranker
+        use_graph: Whether to use Knowledge Graph expansion (default True)
         
     Returns:
-        Reranked search results
+        dict with "results" list and optional "graph_context"
     """
     # 1. Semantic search
     semantic_results = _semantic_search(
@@ -303,10 +305,97 @@ async def search_obsidian_hybrid(
     # 2. BM25 search
     bm25_results = _bm25_search(query, limit=limit * 3)
     
-    # 3. RRF fusion
-    fused = _reciprocal_rank_fusion(semantic_results, bm25_results)
+    # 3. Knowledge Graph expansion (if enabled)
+    graph_context = None
+    graph_chunk_ids = set()  # chunk IDs that should get a boost
+    graph_results = []
+
+    if use_graph:
+        try:
+            from . import kg_search as obsidian_kg_search
+
+            # 3a. Detect entities in query
+            matched_entities = await obsidian_kg_search.detect_entities(
+                query, threshold=0.35, limit=5
+            )
+
+            if matched_entities:
+                entity_ids = [e["id"] for e in matched_entities]
+
+                # 3b. Expand graph (1-hop neighbors)
+                related_entities = await obsidian_kg_search.expand_entities(
+                    entity_ids, max_related=15
+                )
+
+                # 3c. Get chunks linked to matched + related entities
+                all_entity_ids = entity_ids + [e["id"] for e in related_entities]
+                pool = await obsidian_kg_search._get_pool()
+                
+                entity_chunk_rows = await pool.fetch(
+                    """SELECT DISTINCT c.chunk_id AS id, c.content AS text,
+                              c.file_path, c.file_name, c.folder, c.context_prefix,
+                              c.metadata
+                       FROM kg_entity_chunks ec
+                       JOIN obsidian_chunks c ON c.chunk_id = ec.chunk_id
+                       WHERE ec.entity_id = ANY($1::int[])
+                       LIMIT $2""",
+                    all_entity_ids, limit * 2,
+                )
+
+                for r in entity_chunk_rows:
+                    chunk_id = r["id"]
+                    graph_chunk_ids.add(chunk_id)
+                    meta = json.loads(r["metadata"]) if r["metadata"] else {}
+                    meta.update({
+                        "file_path": r["file_path"],
+                        "file_name": r["file_name"],
+                        "folder": r["folder"],
+                    })
+                    content = r["text"]
+                    ctx = r["context_prefix"]
+                    graph_results.append({
+                        "id": chunk_id,
+                        "text": f"{ctx}\n\n{content}" if ctx else content,
+                        "metadata": meta,
+                        "graph_boosted": True,
+                        # Low base score — reranker will re-score properly
+                        "semantic_score": 0.005,
+                    })
+
+                graph_context = {
+                    "detected_entities": [
+                        {"id": e["id"], "name": e["name"], "type": e["type"],
+                         "similarity": e.get("similarity", 0)}
+                        for e in matched_entities
+                    ],
+                    "expanded_entities": [
+                        {"id": e["id"], "name": e["name"], "type": e["type"],
+                         "relation": e.get("relation_type", "")}
+                        for e in related_entities
+                    ],
+                    "graph_chunks_added": len(graph_results),
+                }
+        except Exception as e:
+            # Graph errors should not break search
+            print(f"[obsidian] Graph expansion error: {e}")
     
-    # 4. Rerank (if enabled and we have results)
+    # 4. RRF fusion (semantic + BM25 + graph chunks)
+    fusion_lists = [semantic_results, bm25_results]
+    if graph_results:
+        fusion_lists.append(graph_results)
+    fused = _reciprocal_rank_fusion(*fusion_lists)
+
+    # 4b. Entity boost: if a chunk's ID is in graph_chunk_ids, boost its RRF score
+    if graph_chunk_ids:
+        GRAPH_BOOST = 0.005  # small additive boost
+        for doc in fused:
+            if doc.get("id") in graph_chunk_ids:
+                doc["rrf_score"] = doc.get("rrf_score", 0) + GRAPH_BOOST
+                doc["graph_boosted"] = True
+        # Re-sort after boosting
+        fused.sort(key=lambda x: x.get("rrf_score", 0), reverse=True)
+    
+    # 5. Rerank (if enabled and we have results)
     if use_reranker and fused:
         # Prepare documents for reranker
         docs_for_rerank = [
@@ -330,7 +419,11 @@ async def search_obsidian_hybrid(
     
     # Format results
     formatted = []
+    graph_boosted_count = 0
     for r in results:
+        is_boosted = r.get("graph_boosted", False)
+        if is_boosted:
+            graph_boosted_count += 1
         formatted.append({
             "id": r.get("id", ""),
             "content": r.get("text", r.get("content", "")),
@@ -341,14 +434,24 @@ async def search_obsidian_hybrid(
             "rrf_score": r.get("rrf_score"),
             "rerank_score": r.get("rerank_score"),
             "reranker": r.get("reranker"),
+            "graph_boosted": is_boosted,
         })
     
+    if graph_context:
+        graph_context["graph_boosted_count"] = graph_boosted_count
+
+    method = "hybrid"
+    if use_graph and graph_context:
+        method += "+graph"
+    if use_reranker:
+        method += "+rerank"
+
     try:
-        _log_search(query, len(formatted), folder_filter, caller, "hybrid+rerank")
+        _log_search(query, len(formatted), folder_filter, caller, method)
     except Exception:
         pass
     
-    return formatted
+    return {"results": formatted, "graph_context": graph_context}
 
 
 def get_obsidian_stats(collection_name: str = "obsidian_notes") -> dict[str, Any]:
