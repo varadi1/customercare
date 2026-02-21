@@ -4,10 +4,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # ChromaDB
-    chroma_host: str = "localhost"
-    chroma_port: int = 8100
-    chroma_collection: str = "hanna_knowledge"
+    # ChromaDB settings removed — migrated to PostgreSQL+pgvector
 
     # Embedding
     embedding_backend: str = "bge-m3"  # "bge-m3" or "openai"

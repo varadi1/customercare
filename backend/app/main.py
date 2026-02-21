@@ -39,12 +39,12 @@ from . import analytics
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown."""
-    # Verify ChromaDB connection
+    # Verify PostgreSQL connection
     try:
-        stats = rag_search.get_collection_stats()
-        print(f"[hanna] ChromaDB connected: {stats}")
+        stats = await rag_search._get_collection_stats_async()
+        print(f"[hanna] PostgreSQL connected: {stats}")
     except Exception as e:
-        print(f"[hanna] WARNING: ChromaDB not reachable: {e}")
+        print(f"[hanna] WARNING: PostgreSQL not reachable: {e}")
     
     # Initialize reranker (local service with Cohere fallback)
     reranker_mode = await reranker.initialize()
@@ -67,16 +67,16 @@ app = FastAPI(
 async def health():
     """Health check."""
     try:
-        stats = rag_search.get_collection_stats()
-        chroma_status = "connected"
+        stats = await rag_search._get_collection_stats_async()
+        db_status = "connected"
         count = stats.get("total_chunks", 0)
     except Exception:
-        chroma_status = "disconnected"
+        db_status = "disconnected"
         count = 0
 
     return HealthResponse(
         status="ok",
-        chromadb=chroma_status,
+        chromadb=db_status,  # field name kept for API compat (now PostgreSQL+pgvector)
         collection_count=count,
     )
 
@@ -125,7 +125,7 @@ async def ingest_text(doc: DocumentIngest):
         return IngestResult(
             chunks_created=count,
             source=doc.source,
-            collection=settings.chroma_collection,
+            collection="postgresql",  # Legacy field (migrated from ChromaDB)
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -168,7 +168,7 @@ async def ingest_pdf(
         return IngestResult(
             chunks_created=count,
             source=file.filename,
-            collection=settings.chroma_collection,
+            collection="postgresql",  # Legacy field (migrated from ChromaDB)
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -193,7 +193,7 @@ async def ingest_email_pair(
         return IngestResult(
             chunks_created=count,
             source=source,
-            collection=settings.chroma_collection,
+            collection="postgresql",  # Legacy field (migrated from ChromaDB)
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -246,7 +246,7 @@ async def search(query: SearchQuery):
 @app.get("/stats")
 async def stats():
     """Knowledge base statistics."""
-    return rag_search.get_collection_stats()
+    return await rag_search._get_collection_stats_async()
 
 
 # ─── RAG: Chunk Management ────────────────────────────────────────────────────

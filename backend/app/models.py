@@ -164,6 +164,6 @@ class AttachmentAnalysisResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    chromadb: str
+    chromadb: str  # Legacy field name (now PostgreSQL+pgvector)
     collection_count: int
     version: str = "0.1.0"
