@@ -6,19 +6,25 @@ from __future__ import annotations
 # Higher = more authoritative (0.0 - 1.0)
 AUTHORITY_WEIGHTS: dict[str, float] = {
     # Official program documents — always preferred
-    "palyazat_felhivas": 1.00,      # Pályázati felhívás — THE source of truth
-    "palyazat_melleklet": 0.95,     # Felhívás mellékletei
-    "kozlemeny": 0.90,              # Hivatalos közlemények (↑ volt 0.85)
-    "gyik": 0.85,                   # GYIK — curated Q&A (↑ volt 0.80)
-    "segedlet": 0.80,               # Segédletek, útmutatók (↑ volt 0.75)
+    # PostgreSQL doc_type names (Hungarian) + ChromaDB legacy names
+    "felhívás": 1.00,               # Pályázati felhívás — THE source of truth
+    "palyazat_felhivas": 1.00,      # Legacy ChromaDB name
+    "melléklet": 0.95,              # Felhívás mellékletei
+    "palyazat_melleklet": 0.95,     # Legacy
+    "közlemény": 0.90,              # Hivatalos közlemények
+    "kozlemeny": 0.90,              # Legacy
+    "gyik": 0.85,                   # GYIK — curated Q&A
+    "segédlet": 0.80,               # Segédletek, útmutatók
+    "segedlet": 0.80,               # Legacy
     
     # Internal knowledge — lower priority
-    "document": 0.55,               # Általános dokumentumok (↓ volt 0.65, EU közlemény ide esik)
-    "general": 0.50,                # Egyéb (↓ volt 0.60)
+    "dokumentum": 0.55,             # Általános dokumentumok
+    "document": 0.55,               # Legacy
+    "general": 0.50,                # Egyéb
     
     # Email-based knowledge — useful patterns but NOT authoritative
-    "email_reply": 0.40,            # Korábbi email válaszok (↓ volt 0.50)
-    "email_qa": 0.40,               # Email Q&A párok (↓ volt 0.50)
+    "email_reply": 0.40,            # Korábbi email válaszok
+    "email_qa": 0.40,               # Email Q&A párok
     "email_question": 0.30,         # Beérkezett kérdések (legalacsonyabb)
 }
 
@@ -29,7 +35,10 @@ DEFAULT_WEIGHT = 0.45
 AUTHORITY_INFLUENCE = 0.40
 
 # Chunk types that should be guaranteed in top results when relevant
-PRIORITY_CHUNK_TYPES = {"palyazat_felhivas", "palyazat_melleklet", "gyik", "kozlemeny"}
+PRIORITY_CHUNK_TYPES = {
+    "felhívás", "melléklet", "gyik", "közlemény",  # PostgreSQL doc_type
+    "palyazat_felhivas", "palyazat_melleklet", "kozlemeny",  # Legacy ChromaDB
+}
 
 
 def get_authority_weight(chunk_type: str) -> float:
@@ -84,23 +93,37 @@ def apply_authority_weighting(results: list[dict], influence: float | None = Non
 
 
 def _apply_authority_floor(results: list[dict]) -> None:
-    """Ensure high-authority chunks with decent scores are in the top 3.
+    """Ensure high-authority chunks with decent scores are in the top results.
     
     If a priority chunk type (felhivas, melleklet, gyik, kozlemeny) has
-    pre_authority_score > 0.5 but is not in the top 3, swap it in.
+    pre_authority_score > 0.4 but is not in the top 3, swap it in.
+    
+    Also ensures at least one non-email_reply source appears in top 5
+    when available (diversity guarantee).
     Modifies the list in-place.
     """
     if len(results) <= 3:
         return
     
-    # Find priority chunks outside top 3 that have good scores
+    # 1. Priority floor: promote priority chunks into top 3
     for i in range(3, len(results)):
         chunk_type = results[i].get("chunk_type", "")
         pre_score = results[i].get("pre_authority_score", 0)
         
-        if chunk_type in PRIORITY_CHUNK_TYPES and pre_score > 0.5:
+        if chunk_type in PRIORITY_CHUNK_TYPES and pre_score > 0.4:
             # Find the lowest-ranked non-priority item in top 3 to swap with
             for j in range(2, -1, -1):
                 if results[j].get("chunk_type", "") not in PRIORITY_CHUNK_TYPES:
                     results[j], results[i] = results[i], results[j]
                     break
+    
+    # 2. Diversity guarantee: if top 5 are ALL email_reply, promote the best non-reply
+    top5_types = [r.get("chunk_type", "") for r in results[:5]]
+    if all(t in ("email_reply", "email_question", "email_qa") for t in top5_types):
+        for i in range(5, len(results)):
+            ct = results[i].get("chunk_type", "")
+            if ct not in ("email_reply", "email_question", "email_qa"):
+                # Promote to position 2 (after best result, before the rest)
+                item = results.pop(i)
+                results.insert(2, item)
+                break

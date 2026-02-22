@@ -594,10 +594,45 @@ async def extract_attachments(mailbox: str, message_id: str):
 
 @app.post("/bm25/rebuild")
 async def bm25_rebuild():
-    """Manually rebuild the BM25 index."""
+    """Refresh BM25 index statistics in PostgreSQL.
+    
+    The content_tsvector column is auto-generated, so no manual update needed.
+    This endpoint reindexes the GIN index and returns stats.
+    """
     try:
-        result = BM25Index.get().rebuild()
-        return result
+        import asyncpg
+        pool = await asyncpg.create_pool(
+            "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp",
+            min_size=1, max_size=3,
+        )
+        async with pool.acquire() as conn:
+            # Count total and indexed chunks
+            total = await conn.fetchval("SELECT COUNT(*) FROM chunks")
+            has_tsv = await conn.fetchval(
+                "SELECT COUNT(*) FROM chunks WHERE content_tsvector IS NOT NULL"
+            )
+            
+            # REINDEX the GIN index for performance
+            try:
+                await conn.execute("REINDEX INDEX CONCURRENTLY idx_chunks_tsvector")
+            except Exception:
+                # CONCURRENTLY might not work in transaction; try without
+                try:
+                    await conn.execute("REINDEX INDEX idx_chunks_tsvector")
+                except Exception as idx_e:
+                    print(f"[bm25] REINDEX warning (non-fatal): {idx_e}")
+            
+            # ANALYZE for fresh statistics
+            await conn.execute("ANALYZE chunks")
+        
+        await pool.close()
+        return {
+            "status": "ok",
+            "documents": total,
+            "indexed": has_tsv,
+            "storage": "postgresql_generated_tsvector",
+            "note": "content_tsvector is auto-generated; ANALYZE refreshed stats",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

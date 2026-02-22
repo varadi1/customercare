@@ -18,7 +18,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..config import settings
-from ..rag.ingest import ingest_text
+from ..rag.ingest import ingest_text_async
 from .auth import get_auth_headers
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -199,7 +199,7 @@ async def ingest_historical_emails(
                         "body_preview": body_text[:400],
                     })
             else:
-                chunks = ingest_text(
+                chunks = await ingest_text_async(
                     text=full_text,
                     source=source,
                     category="ügyfélszolgálat",
