@@ -1,5 +1,6 @@
 """Hanna Backend — FastAPI REST API for RAG + Email."""
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -65,20 +66,30 @@ app = FastAPI(
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Health check."""
+    """Health check — full (DB + search)."""
     try:
-        stats = await rag_search._get_collection_stats_async()
+        stats = await asyncio.wait_for(
+            rag_search._get_collection_stats_async(), timeout=4.0
+        )
         db_status = "connected"
         count = stats.get("total_chunks", 0)
-    except Exception:
+    except (asyncio.TimeoutError, Exception):
         db_status = "disconnected"
         count = 0
 
     return HealthResponse(
-        status="ok",
+        status="ok" if db_status == "connected" else "degraded",
         chromadb=db_status,  # field name kept for API compat (now PostgreSQL+pgvector)
         collection_count=count,
     )
+
+
+@app.get("/livez")
+async def liveness():
+    """Lightweight liveness probe — no DB, no async I/O.
+    Returns instantly even if event loop is under load.
+    Docker healthcheck should use this endpoint."""
+    return {"alive": True}
 
 
 @app.get("/reranker/status")
