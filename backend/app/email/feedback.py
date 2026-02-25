@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
@@ -16,8 +17,102 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 def _html_to_text(html: str) -> str:
     """Strip HTML to plain text for comparison."""
+    if not html:
+        return ""
     soup = BeautifulSoup(html, "html.parser")
     return soup.get_text(separator="\n", strip=True)
+
+
+def _strip_hanna_banner_text(text: str) -> str:
+    """Remove Hanna AI Draft banner from plain text."""
+    if not text:
+        return text
+    # Remove lines containing Hanna banner markers
+    lines = text.split("\n")
+    clean_lines = []
+    skip = False
+    for line in lines:
+        stripped = line.strip()
+        # Start of Hanna banner
+        if "Hanna AI Draft" in stripped and ("Confidence" in stripped or "Forrás" in stripped):
+            skip = True
+            continue
+        if skip:
+            # Banner typically ends before "Tisztelt" or after an empty line following source info
+            if stripped.startswith("Tisztelt") or stripped.startswith("Köszön"):
+                skip = False
+                clean_lines.append(line)
+            elif "Forrás:" in stripped or "Dash:" in stripped or "Pályázó kérdése:" in stripped:
+                continue  # still in banner
+            elif stripped == "":
+                skip = False  # empty line = end of banner
+            else:
+                skip = False
+                clean_lines.append(line)
+        else:
+            # Also catch single-line banner format
+            if "🤖 Hanna AI Draft" in stripped:
+                continue
+            clean_lines.append(line)
+    return "\n".join(clean_lines)
+
+
+def _extract_reply_text(html: str) -> str:
+    """Extract only the reply portion from a sent email HTML, removing quoted original.
+    
+    Works at HTML level to identify quote boundaries, then extracts text.
+    Handles: divRplyFwdMsg, border-top #E1E1E1, <hr> dividers, Original Message.
+    """
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, "html.parser")
+    
+    # Strategy 1: <div id="divRplyFwdMsg"> (Desktop Outlook)
+    reply_div = soup.find(id="divRplyFwdMsg")
+    if reply_div:
+        # Get all text BEFORE this div
+        texts = []
+        for el in reply_div.previous_siblings:
+            t = el.get_text(separator="\n", strip=True) if hasattr(el, 'get_text') else str(el).strip()
+            if t:
+                texts.append(t)
+        # Also remove <hr> separators from the text
+        result = "\n".join(reversed(texts))
+        return result.strip()
+    
+    # Strategy 2: border-top solid #E1E1E1 (OWA/new Outlook)
+    for div in soup.find_all("div"):
+        style = div.get("style", "") or ""
+        if "border-top" in style and "#E1E1E1" in style:
+            texts = []
+            for el in div.previous_siblings:
+                t = el.get_text(separator="\n", strip=True) if hasattr(el, 'get_text') else str(el).strip()
+                if t:
+                    texts.append(t)
+            result = "\n".join(reversed(texts))
+            return result.strip()
+    
+    # Strategy 3: text-level — find "From:" / "Feladó:" pattern
+    full_text = soup.get_text(separator="\n", strip=True)
+    
+    # Look for common reply divider patterns
+    patterns = [
+        r"\n\s*From:.*?\nSent:",  # English Outlook
+        r"\n\s*Feladó:.*?\nElküldve:",  # Hungarian Outlook
+        r"-{3,}\s*Original Message\s*-{3,}",  # Original Message marker
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, full_text, re.IGNORECASE | re.DOTALL)
+        if match:
+            # Return everything before the match
+            # Also strip any trailing <hr> equivalent (dashes, underscores)
+            reply_text = full_text[:match.start()]
+            reply_text = re.sub(r"\n\s*[-_=]{3,}\s*$", "", reply_text)
+            return reply_text.strip()
+    
+    # No quote found — return full text
+    return full_text
 
 
 def _similarity(a: str, b: str) -> float:
@@ -27,23 +122,15 @@ def _similarity(a: str, b: str) -> float:
 
 def _norm_subject(s: str) -> str:
     """Normalize email subject for comparison."""
-    import re
     return re.sub(r"^(re:|fw:|fwd:)\s*", "", (s or "").lower().strip())
 
 
 async def check_feedback(mailbox: str, hours: int = 48) -> dict:
-    """Compare sent emails with stored drafts.
-
-    Matches by conversationId first, then falls back to subject + body
-    similarity (colleagues often send from a new thread, not the draft).
-
-    Returns stats on how many drafts were accepted unchanged vs modified.
-    """
+    """Compare sent emails with stored drafts."""
     headers = get_auth_headers()
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Get recent drafts from store
     drafts = get_recent_drafts(hours=hours)
     if not drafts:
         return {
@@ -52,7 +139,7 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             "drafts_checked": 0,
         }
 
-    # Get sent emails (paginate up to 500)
+    # Get sent emails
     sent_emails: list[dict] = []
     async with httpx.AsyncClient(timeout=60) as client:
         sent_url = f"{GRAPH_BASE}/users/{mailbox}/mailFolders/SentItems/messages"
@@ -62,15 +149,11 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             "$select": "id,conversationId,subject,body,sentDateTime",
             "$orderby": "sentDateTime desc",
         }
-
         resp = await client.get(sent_url, headers=headers, params=sent_params)
         if resp.status_code != 200:
             return {"status": "error", "message": f"Failed to get sent items: {resp.status_code}"}
-
         data = resp.json()
         sent_emails.extend(data.get("value", []))
-
-        # Paginate if needed (up to 500)
         next_link = data.get("@odata.nextLink")
         pages = 0
         while next_link and pages < 4:
@@ -82,21 +165,22 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             next_link = data.get("@odata.nextLink")
             pages += 1
 
-    # Index sent emails by conversationId, normalized subject, and body text
+    # Index sent emails
     sent_by_conv: dict[str, list[dict]] = {}
     sent_by_subj: dict[str, list[dict]] = {}
-    all_sent_with_text: list[tuple[dict, str]] = []
+    sent_text_cache: dict[str, str] = {}
     for email in sent_emails:
+        eid = email.get("id", "")
         conv_id = email.get("conversationId", "")
         if conv_id:
             sent_by_conv.setdefault(conv_id, []).append(email)
         subj = _norm_subject(email.get("subject", ""))
         if subj:
             sent_by_subj.setdefault(subj, []).append(email)
-        sent_text = _html_to_text(email.get("body", {}).get("content", ""))
-        all_sent_with_text.append((email, sent_text))
+        # Extract reply-only text
+        raw_html = email.get("body", {}).get("content", "")
+        sent_text_cache[eid] = _extract_reply_text(raw_html)
 
-    # Compare
     results = {
         "drafts_checked": len(drafts),
         "sent_found": 0,
@@ -105,10 +189,11 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
         "not_sent": 0,
         "match_by_conv": 0,
         "match_by_subject": 0,
+        "match_by_body": 0,
         "details": [],
     }
 
-    # Check which drafts still exist in Drafts folder (if gone = sent or deleted)
+    # Check which drafts still exist
     draft_ids = [d.get("draft_id", "") for d in drafts if d.get("draft_id")]
     existing_draft_ids: set[str] = set()
     if draft_ids:
@@ -117,10 +202,8 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
                 try:
                     check_url = f"{GRAPH_BASE}/users/{mailbox}/messages/{did}"
                     resp = await client.get(check_url, headers=headers, params={"$select": "id,isDraft"})
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        if data.get("isDraft", False):
-                            existing_draft_ids.add(did)
+                    if resp.status_code == 200 and resp.json().get("isDraft", False):
+                        existing_draft_ids.add(did)
                 except Exception:
                     pass
 
@@ -128,19 +211,19 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
 
     for draft in drafts:
         conv_id = draft.get("conversation_id", "")
-        draft_text = _html_to_text(draft.get("draft_html", ""))
+        # Clean draft text: strip Hanna banner
+        draft_html = draft.get("draft_html", "")
+        draft_text_raw = _html_to_text(draft_html)
+        draft_text = _strip_hanna_banner_text(draft_text_raw)
         draft_subj = _norm_subject(draft.get("subject", ""))
 
-        # Strategy 1: match by conversationId
         candidates = sent_by_conv.get(conv_id, []) if conv_id else []
         match_method = "conv"
 
-        # Strategy 2: fallback to subject match
         if not candidates and draft_subj:
             candidates = sent_by_subj.get(draft_subj, [])
             match_method = "subject"
 
-        # Find best matching sent email by body similarity
         best_sim = 0.0
         best_sent_id = ""
 
@@ -149,28 +232,26 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
                 sid = sent.get("id", "")
                 if sid in matched_sent_ids:
                     continue
-                sent_html = sent.get("body", {}).get("content", "")
-                sent_text = _html_to_text(sent_html)
+                sent_text = sent_text_cache.get(sid, "")
                 sim = _similarity(draft_text, sent_text)
                 if sim > best_sim:
                     best_sim = sim
                     best_sent_id = sid
 
-        # Strategy 3: brute-force body similarity against ALL sent emails
         if best_sim < 0.3 and draft_text and len(draft_text) > 30:
-            match_method = "body"
-            for sent, sent_text in all_sent_with_text:
-                sid = sent.get("id", "")
+            for email in sent_emails:
+                sid = email.get("id", "")
                 if sid in matched_sent_ids:
                     continue
+                sent_text = sent_text_cache.get(sid, "")
                 if not sent_text or len(sent_text) < 30:
                     continue
                 sim = _similarity(draft_text, sent_text)
                 if sim > best_sim:
                     best_sim = sim
                     best_sent_id = sid
+                    match_method = "body"
 
-        # Check if draft was consumed (no longer in Drafts folder)
         did = draft.get("draft_id", "")
         draft_consumed = did and did not in existing_draft_ids
 
@@ -179,18 +260,15 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             continue
 
         if draft_consumed and best_sim < 0.15:
-            # Draft was sent/deleted but we can't find similar sent email
-            # → colleague likely edited heavily or deleted
             results["sent_found"] += 1
-            detail = {
+            results["accepted_modified"] += 1
+            results["details"].append({
                 "subject": draft.get("subject", "")[:60],
                 "confidence": draft.get("confidence", ""),
                 "similarity": 0.0,
                 "match_method": "draft_consumed",
                 "status": "sent_or_deleted",
-            }
-            results["accepted_modified"] += 1
-            results["details"].append(detail)
+            })
             continue
 
         results["sent_found"] += 1
@@ -199,14 +277,19 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
 
         if match_method == "conv":
             results["match_by_conv"] += 1
-        else:
+        elif match_method == "subject":
             results["match_by_subject"] += 1
+        else:
+            results["match_by_body"] += 1
 
+        # Body matches are less reliable — flag them
+        match_reliable = match_method in ("conv", "subject")
         detail = {
             "subject": draft.get("subject", "")[:60],
             "confidence": draft.get("confidence", ""),
             "similarity": round(best_sim, 3),
             "match_method": match_method,
+            "match_reliable": match_reliable,
         }
 
         if best_sim > 0.85:
@@ -215,6 +298,10 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
         elif best_sim > 0.3:
             results["accepted_modified"] += 1
             detail["status"] = "modified"
+        elif not match_reliable:
+            # Body match with low similarity — likely wrong match
+            results["accepted_modified"] += 1
+            detail["status"] = "uncertain_match"
         else:
             results["accepted_modified"] += 1
             detail["status"] = "heavily_modified"

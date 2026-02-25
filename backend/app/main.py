@@ -278,14 +278,14 @@ class InvalidateRequest(BaseModel):
 
 
 @app.post("/rag/invalidate")
-async def invalidate_chunks(req: InvalidateRequest):
+async def invalidate_chunks_endpoint(req: InvalidateRequest):
     """Mark chunks as invalid (sets valid_to = today).
     
     Chunks are not deleted, just marked as outdated.
     Use only_valid=true in search to exclude them.
     """
     try:
-        result = rag_search.invalidate_chunks(req.chunk_ids, req.reason)
+        result = await rag_search.invalidate_chunks(req.chunk_ids, req.reason)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

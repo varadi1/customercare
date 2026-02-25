@@ -66,8 +66,11 @@ async def _semantic_search(
         params.append(chunk_type)
         param_idx += 1
     
-    # only_valid filter - assume there's a valid_to field or similar
-    # For now, skip this filter since the schema doesn't clearly specify
+    # only_valid: exclude chunks where metadata->>'valid_to' is set and non-empty
+    if only_valid:
+        where_clauses.append(
+            "(metadata->>'valid_to' IS NULL OR metadata->>'valid_to' = '')"
+        )
     
     params.append(top_k)
     limit_param = f"${param_idx}"
@@ -127,6 +130,7 @@ async def _bm25_search_pg(
     top_k: int,
     category: str | None = None,
     chunk_type: str | None = None,
+    only_valid: bool = True,
 ) -> list[dict]:
     """BM25-style full-text search via PostgreSQL tsvector."""
     pool = await _get_pool()
@@ -145,6 +149,11 @@ async def _bm25_search_pg(
         where_clauses.append(f"doc_type = ${param_idx}")
         params.append(chunk_type)
         param_idx += 1
+    
+    if only_valid:
+        where_clauses.append(
+            "(metadata->>'valid_to' IS NULL OR metadata->>'valid_to' = '')"
+        )
     
     params.append(top_k)
     limit_param = f"${param_idx}"
@@ -315,6 +324,7 @@ async def search_async(
                 top_k=retrieval_k,
                 category=category,
                 chunk_type=chunk_type,
+                only_valid=only_valid,
             )
             all_bm25.extend(bm25_results)
         except Exception as e:
@@ -468,12 +478,12 @@ async def invalidate_chunks(chunk_ids: list[str], reason: str = "") -> dict:
     updated = 0
     errors = []
     
-    # Assuming there's a valid_to field - adapt as needed based on actual schema
+    import json as _json
     for chunk_id in chunk_ids:
         try:
             result = await pool.execute(
-                "UPDATE chunks SET metadata = metadata || $1 WHERE id = $2",
-                {"valid_to": today, "invalidation_reason": reason},
+                "UPDATE chunks SET metadata = metadata || $1::jsonb WHERE id = $2",
+                _json.dumps({"valid_to": today, "invalidation_reason": reason}),
                 chunk_id
             )
             if result == "UPDATE 1":
