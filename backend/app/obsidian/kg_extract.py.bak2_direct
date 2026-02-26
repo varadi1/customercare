@@ -137,115 +137,124 @@ def _parse_frontmatter(content: str) -> dict:
         return result
 
 
-
 def extract_frontmatter_entities(content: str, file_path: str) -> tuple[list[dict], list[dict]]:
-    """Extract entities and relations from YAML frontmatter (Enhanced)."""
+    """Extract entities and relations from YAML frontmatter.
+
+    Returns (entities, relations).
+    """
     fm = _parse_frontmatter(content)
     if not fm:
         return [], []
 
     entities = []
     relations = []
-    
     file_stem = Path(file_path).stem
-    # Ha §-al kezdodik, az projekt. De ha type: construction, akkor az Program/Konstrukcio.
-    fm_type = str(fm.get("type", "")).lower().strip()
-    
-    if file_stem.startswith("§"):
-        file_type = "project"
-        # Konstrukcio kezelese
-        if fm_type == "construction":
-            file_type = "program" # Palyazati konstrukcio
-    else:
-        file_type = "concept"
+    file_type = "project" if file_stem.startswith("§") else "concept"
 
-    # 1. Sajat magunk definialasa metaadatokkal (Type, Status, Priority)
-    metadata = {}
-    if fm.get("type"):
-        metadata["type"] = fm.get("type")
-    if fm.get("status"):
-        metadata["status"] = fm.get("status")
-    if fm.get("priority"):
-        metadata["priority"] = fm.get("priority")
-    if fm.get("category"):
-        metadata["category"] = fm.get("category")
-        
-    if metadata:
-        entities.append({
-            "name": file_stem,
-            "type": file_type,
-            "source_file": file_path,
-            "mention_type": "self_metadata",
-            "metadata": metadata,
-            "confidence": 1.0
-        })
-
-    # 2. People (Emberek)
+    # People field
     people = fm.get("People") or fm.get("people") or []
     if isinstance(people, str):
         people = [people]
     for p in people:
         name = WIKILINK_RE.sub(r"\1", str(p)).strip()
         if name:
-            entities.append({"name": name, "type": "person", "source_file": file_path, "confidence": 1.0})
+            entities.append({
+                "name": name,
+                "type": "person",
+                "source_file": file_path,
+                "mention_type": "frontmatter",
+                "confidence": 1.0,
+            })
             relations.append({
-                "source_name": name, "source_type": "person",
-                "target_name": file_stem, "target_type": file_type,
-                "relation_type": "WORKS_ON" if file_type in ["project", "program"] else "MENTIONED_IN",
-                "source_file": file_path, "confidence": 1.0
+                "source_name": name,
+                "source_type": "person",
+                "target_name": file_stem,
+                "target_type": file_type,
+                "relation_type": "WORKS_ON" if file_type == "project" else "MENTIONED_IN",
+                "source_file": file_path,
+                "confidence": 1.0,
             })
 
-    # 3. Companies (Cegek) - UJ!
-    companies = fm.get("companies") or fm.get("company") or fm.get("Companies") or []
-    if isinstance(companies, str):
-        companies = [companies]
-    for c in companies:
-        name = WIKILINK_RE.sub(r"\1", str(c)).strip()
-        if name:
-            entities.append({"name": name, "type": "org", "source_file": file_path, "confidence": 1.0})
-            relations.append({
-                "source_name": name, "source_type": "org",
-                "target_name": file_stem, "target_type": file_type,
-                "relation_type": "PARTNER_IN" if file_type in ["project", "program"] else "MENTIONED_IN",
-                "source_file": file_path, "confidence": 1.0
-            })
-
-    # 4. Projects (Kapcsolodo projektek) - UJ!
-    projects = fm.get("projects") or fm.get("project") or []
-    if isinstance(projects, str):
-        projects = [projects]
-    for p in projects:
-        name = WIKILINK_RE.sub(r"\1", str(p)).strip()
-        if name and name != file_stem:
-            # Feltetelezzuk, hogy a hivatkozott is projekt
-            entities.append({"name": name, "type": "project", "source_file": file_path, "confidence": 1.0})
-            relations.append({
-                "source_name": file_stem, "source_type": file_type,
-                "target_name": name, "target_type": "project",
-                "relation_type": "RELATED_TO",
-                "source_file": file_path, "confidence": 1.0
-            })
-
-    # 5. Tags
+    # Tags
     tags = fm.get("tags") or []
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",")]
     for tag in tags:
         tag = str(tag).strip()
         if tag:
-            entities.append({"name": tag, "type": "tag", "source_file": file_path, "confidence": 1.0})
+            entities.append({
+                "name": tag,
+                "type": "tag",
+                "source_file": file_path,
+                "mention_type": "frontmatter",
+                "confidence": 1.0,
+            })
 
-    # 6. Status (Relaciokent is)
+    # Program (e.g., HORIZON Europe)
+    program = fm.get("program")
+    if program:
+        entities.append({
+            "name": str(program),
+            "type": "org",
+            "source_file": file_path,
+            "mention_type": "frontmatter",
+            "confidence": 1.0,
+        })
+        relations.append({
+            "source_name": file_stem,
+            "source_type": file_type,
+            "target_name": str(program),
+            "target_type": "org",
+            "relation_type": "BELONGS_TO",
+            "source_file": file_path,
+            "confidence": 1.0,
+        })
+
+    # Coordinator
+    coordinator = fm.get("coordinator")
+    if coordinator:
+        coord_name = WIKILINK_RE.sub(r"\1", str(coordinator)).strip()
+        # Try to split "Org (Person)" pattern
+        coord_match = re.match(r"(.+?)\s*\((.+?)\)", coord_name)
+        if coord_match:
+            org_name = coord_match.group(1).strip()
+            person_name = coord_match.group(2).strip()
+            entities.append({"name": org_name, "type": "org", "source_file": file_path,
+                             "mention_type": "frontmatter", "confidence": 1.0})
+            entities.append({"name": person_name, "type": "person", "source_file": file_path,
+                             "mention_type": "frontmatter", "confidence": 1.0})
+            relations.append({
+                "source_name": file_stem, "source_type": file_type,
+                "target_name": org_name, "target_type": "org",
+                "relation_type": "COORDINATED_BY",
+                "source_file": file_path, "confidence": 1.0,
+            })
+        else:
+            entities.append({"name": coord_name, "type": "org", "source_file": file_path,
+                             "mention_type": "frontmatter", "confidence": 1.0})
+
+    # Status
     status = fm.get("status")
-    if status and file_type in ["project", "program"]:
+    if status and file_type == "project":
         relations.append({
             "source_name": file_stem, "source_type": file_type,
             "target_name": str(status), "target_type": "concept",
             "relation_type": "HAS_STATUS",
-            "source_file": file_path, "confidence": 1.0
+            "source_file": file_path, "confidence": 1.0,
         })
 
+    # Meeting
+    meetings = fm.get("meeting") or []
+    if isinstance(meetings, str):
+        meetings = [meetings]
+    for mtg in meetings:
+        mtg = str(mtg).strip()
+        if mtg:
+            entities.append({"name": mtg, "type": "concept", "source_file": file_path,
+                             "mention_type": "frontmatter", "confidence": 1.0})
+
     return entities, relations
+
 
 # ── LLM-based NER ────────────────────────────────────────────────────
 
@@ -308,31 +317,29 @@ def extract_llm_entities(
             c.get("content", c.get("text", ""))[:2000] for c in batch
         )
         user_msg = f"Fájl: {file_name}\n\nSzövegrészletek:\n\n{combined}"
-        # --- AGENT ZERO MODOSITAS START (P5 - Ontologia) ---
-        # Prompt kiegeszitese szigoru szabalyokkal
-        system_message_custom = LLM_NER_PROMPT + """
-SZIGORU ONTOLOGIAI SZABALYOK:
-1. TILOS a generikus "LINKS_TO" vagy "RELATED_TO" hasznalata!
-2. Csak es kizarolag ezeket a relaciokat hasznalhatod:
-   - IS_A (pl. Snomed IS_A Standard)
-   - PART_OF (pl. Projekt X PART_OF Portfólio Y)
-   - WORKS_ON (pl. Személy WORKS_ON Projekt)
-   - DEPENDS_ON (pl. Feladat A DEPENDS_ON Feladat B)
-   - USES (pl. Rendszer USES Technológia)
-   - IMPLEMENTS (pl. Kod IMPLEMENTS Funkcio)
-   - MENTIONED_IN (ha csak emlites szintjen szerepel)
-   - PARTNER_IN (pl. Ceg PARTNER_IN Projekt)
-3. Minden entitas nevet KISBETUSITVE (lower-case) add vissza!
-"""
-        # --- AGENT ZERO MODOSITAS END ---
-
 
         try:
             resp = client.chat.completions.create(
                 model=KG_MODEL,
+                
+    # --- AGENT ZERO MODOSITAS START (P5 - Ontologia) ---
+    system_message += """
+    SZIGORU ONTOLOGIAI SZABALYOK:
+    1. TILOS a generikus "LINKS_TO" vagy "RELATED_TO" hasznalata!
+    2. Csak es kizarolag ezeket a relaciokat hasznalhatod:
+       - IS_A (pl. Snomed IS_A Standard)
+       - PART_OF (pl. Projekt X PART_OF Portfólio Y)
+       - WORKS_ON (pl. Személy WORKS_ON Projekt)
+       - DEPENDS_ON (pl. Feladat A DEPENDS_ON Feladat B)
+       - USES (pl. Rendszer USES Technológia)
+       - IMPLEMENTS (pl. Kod IMPLEMENTS Funkcio)
+       - MENTIONED_IN (ha csak emlites szintjen szerepel)
+    3. Minden entitas nevet KISBETUSITVE (lower-case) add vissza!
+    """
+    # --- AGENT ZERO MODOSITAS END ---
 
     messages=[
-                    {"role": "system", "content": system_message_custom},
+                    {"role": "system", "content": LLM_NER_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
                 response_format={"type": "json_object"},
@@ -501,7 +508,7 @@ async def extract_file_kg(
         eid = await upsert_entity(
             pool, e["name"], e["type"],
             aliases=e.get("aliases", []),
-            source_file=e.get("source_file"), metadata=e.get("metadata"),
+            source_file=e.get("source_file"),
         )
         entity_ids[key] = eid
         stats["entities"] += 1

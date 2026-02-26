@@ -146,20 +146,20 @@ def extract_frontmatter_entities(content: str, file_path: str) -> tuple[list[dic
 
     entities = []
     relations = []
-    
+
     file_stem = Path(file_path).stem
-    # Ha §-al kezdodik, az projekt. De ha type: construction, akkor az Program/Konstrukcio.
+    # Ha §-al kezdődik, az projekt. De ha type: construction, akkor az Program/Konstrukció.
     fm_type = str(fm.get("type", "")).lower().strip()
-    
+
     if file_stem.startswith("§"):
         file_type = "project"
-        # Konstrukcio kezelese
+        # Konstrukció kezelése
         if fm_type == "construction":
-            file_type = "program" # Palyazati konstrukcio
+            file_type = "program" # Pályázati konstrukció
     else:
         file_type = "concept"
 
-    # 1. Sajat magunk definialasa metaadatokkal (Type, Status, Priority)
+    # 1. Saját magunk definiálása metaadatokkal (Type, Status, Priority)
     metadata = {}
     if fm.get("type"):
         metadata["type"] = fm.get("type")
@@ -169,7 +169,7 @@ def extract_frontmatter_entities(content: str, file_path: str) -> tuple[list[dic
         metadata["priority"] = fm.get("priority")
     if fm.get("category"):
         metadata["category"] = fm.get("category")
-        
+
     if metadata:
         entities.append({
             "name": file_stem,
@@ -195,7 +195,7 @@ def extract_frontmatter_entities(content: str, file_path: str) -> tuple[list[dic
                 "source_file": file_path, "confidence": 1.0
             })
 
-    # 3. Companies (Cegek) - UJ!
+    # 3. Companies (Cégek) - ÚJ!
     companies = fm.get("companies") or fm.get("company") or fm.get("Companies") or []
     if isinstance(companies, str):
         companies = [companies]
@@ -210,14 +210,14 @@ def extract_frontmatter_entities(content: str, file_path: str) -> tuple[list[dic
                 "source_file": file_path, "confidence": 1.0
             })
 
-    # 4. Projects (Kapcsolodo projektek) - UJ!
+    # 4. Projects (Kapcsolódó projektek) - ÚJ!
     projects = fm.get("projects") or fm.get("project") or []
     if isinstance(projects, str):
         projects = [projects]
     for p in projects:
         name = WIKILINK_RE.sub(r"\1", str(p)).strip()
         if name and name != file_stem:
-            # Feltetelezzuk, hogy a hivatkozott is projekt
+            # Feltételezzük, hogy a hivatkozott is projekt
             entities.append({"name": name, "type": "project", "source_file": file_path, "confidence": 1.0})
             relations.append({
                 "source_name": file_stem, "source_type": file_type,
@@ -235,7 +235,7 @@ def extract_frontmatter_entities(content: str, file_path: str) -> tuple[list[dic
         if tag:
             entities.append({"name": tag, "type": "tag", "source_file": file_path, "confidence": 1.0})
 
-    # 6. Status (Relaciokent is)
+    # 6. Status (Relációként is)
     status = fm.get("status")
     if status and file_type in ["project", "program"]:
         relations.append({
@@ -246,6 +246,7 @@ def extract_frontmatter_entities(content: str, file_path: str) -> tuple[list[dic
         })
 
     return entities, relations
+
 
 # ── LLM-based NER ────────────────────────────────────────────────────
 
@@ -308,31 +309,29 @@ def extract_llm_entities(
             c.get("content", c.get("text", ""))[:2000] for c in batch
         )
         user_msg = f"Fájl: {file_name}\n\nSzövegrészletek:\n\n{combined}"
-        # --- AGENT ZERO MODOSITAS START (P5 - Ontologia) ---
-        # Prompt kiegeszitese szigoru szabalyokkal
-        system_message_custom = LLM_NER_PROMPT + """
-SZIGORU ONTOLOGIAI SZABALYOK:
-1. TILOS a generikus "LINKS_TO" vagy "RELATED_TO" hasznalata!
-2. Csak es kizarolag ezeket a relaciokat hasznalhatod:
-   - IS_A (pl. Snomed IS_A Standard)
-   - PART_OF (pl. Projekt X PART_OF Portfólio Y)
-   - WORKS_ON (pl. Személy WORKS_ON Projekt)
-   - DEPENDS_ON (pl. Feladat A DEPENDS_ON Feladat B)
-   - USES (pl. Rendszer USES Technológia)
-   - IMPLEMENTS (pl. Kod IMPLEMENTS Funkcio)
-   - MENTIONED_IN (ha csak emlites szintjen szerepel)
-   - PARTNER_IN (pl. Ceg PARTNER_IN Projekt)
-3. Minden entitas nevet KISBETUSITVE (lower-case) add vissza!
-"""
-        # --- AGENT ZERO MODOSITAS END ---
-
 
         try:
             resp = client.chat.completions.create(
                 model=KG_MODEL,
+                
+    # --- AGENT ZERO MODOSITAS START (P5 - Ontologia) ---
+    system_message += """
+    SZIGORU ONTOLOGIAI SZABALYOK:
+    1. TILOS a generikus "LINKS_TO" vagy "RELATED_TO" hasznalata!
+    2. Csak es kizarolag ezeket a relaciokat hasznalhatod:
+       - IS_A (pl. Snomed IS_A Standard)
+       - PART_OF (pl. Projekt X PART_OF Portfólio Y)
+       - WORKS_ON (pl. Személy WORKS_ON Projekt)
+       - DEPENDS_ON (pl. Feladat A DEPENDS_ON Feladat B)
+       - USES (pl. Rendszer USES Technológia)
+       - IMPLEMENTS (pl. Kod IMPLEMENTS Funkcio)
+       - MENTIONED_IN (ha csak emlites szintjen szerepel)
+    3. Minden entitas nevet KISBETUSITVE (lower-case) add vissza!
+    """
+    # --- AGENT ZERO MODOSITAS END ---
 
     messages=[
-                    {"role": "system", "content": system_message_custom},
+                    {"role": "system", "content": LLM_NER_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
                 response_format={"type": "json_object"},
