@@ -5,6 +5,14 @@ Hash-based incremental sync, chunking, pgvector embedding storage.
 
 from __future__ import annotations
 
+# --- AGENT ZERO MODOSITAS START (Unstructured) ---
+try:
+    from langchain_community.document_loaders import UnstructuredFileLoader
+    UNSTRUCTURED_AVAILABLE = True
+except ImportError:
+    UNSTRUCTURED_AVAILABLE = False
+# --- AGENT ZERO MODOSITAS END ---
+
 import hashlib
 import json
 from datetime import datetime
@@ -69,7 +77,7 @@ def _extract_folder_type(file_path: Path, vault_path: Path) -> str:
 
 
 def _chunk_file_content(content: str, file_path: str) -> list[str]:
-    if len(content) < 1000:
+    if len(content) < 10:
         return [content]
     if file_path.endswith(".md"):
         chunks = chunk_markdown(content)
@@ -136,12 +144,27 @@ async def _ingest_file(
     file_hash: str,
 ) -> int:
     """Ingest a single file into PostgreSQL."""
+
+    # --- AGENT ZERO PATCH START (Smart Loader) ---
+    content = ""
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read().strip()
+        # Ellenőrizzük, hogy Unstructured-el kell-e tölteni
+        ext = file_path.suffix.lower()
+        if UNSTRUCTURED_AVAILABLE and ext in ['.pdf', '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls', '.jpg', '.jpeg', '.png', '.eml', '.msg']:
+            print(f"[INGEST] Loading {file_path.name} with Unstructured...")
+            # 'single' mode: mindent egybe, 'fast' strategy: csak szöveg
+            loader = UnstructuredFileLoader(str(file_path), mode="single", strategy="fast")
+            docs = loader.load()
+            content = "\n\n".join([d.page_content for d in docs]).strip()
+        else:
+            # Hagyományos betöltés (Markdown, Text)
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
     except Exception as e:
         print(f"[obsidian-pg] Failed to read {file_path}: {e}")
         return 0
+    # --- AGENT ZERO PATCH END ---
+
 
     if not content:
         return 0

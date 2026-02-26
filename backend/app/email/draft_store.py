@@ -56,8 +56,8 @@ def get_drafts_by_conversation(conversation_id: str) -> list[dict]:
     return [d for d in _load() if d.get("conversation_id") == conversation_id]
 
 
-def get_recent_drafts(hours: int = 48) -> list[dict]:
-    """Get drafts from the last N hours."""
+def get_recent_drafts(hours: int = 48, mailbox: str | None = None) -> list[dict]:
+    """Get drafts from the last N hours, optionally filtered by mailbox."""
     from datetime import timedelta
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
     results = []
@@ -65,7 +65,8 @@ def get_recent_drafts(hours: int = 48) -> list[dict]:
         try:
             created = datetime.fromisoformat(d["created_at"])
             if created >= cutoff:
-                results.append(d)
+                if mailbox is None or d.get("mailbox") == mailbox:
+                    results.append(d)
         except (KeyError, ValueError):
             continue
     return results

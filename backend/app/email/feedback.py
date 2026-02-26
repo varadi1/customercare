@@ -131,12 +131,13 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    drafts = get_recent_drafts(hours=hours)
+    drafts = get_recent_drafts(hours=hours, mailbox=mailbox)
     if not drafts:
         return {
             "status": "no_drafts",
-            "message": f"No drafts found in the last {hours} hours",
+            "message": f"No drafts found in the last {hours} hours for mailbox {mailbox}",
             "drafts_checked": 0,
+            "mailbox": mailbox,
         }
 
     # Get sent emails

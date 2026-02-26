@@ -401,12 +401,21 @@ async def get_draft_context(req: DraftContextRequest):
 
 # ─── Email: Feedback ──────────────────────────────────────────────────────────
 
+def _default_feedback_mailbox() -> str:
+    """Return the first configured shared mailbox as the feedback default."""
+    mailboxes = [m.strip() for m in settings.shared_mailboxes.split(",") if m.strip()]
+    return mailboxes[0] if mailboxes else "info@neuzrt.hu"
+
+
 @app.post("/emails/feedback/check")
-async def feedback_check(mailbox: str = "info@neuzrt.hu", hours: int = 48):
+async def feedback_check(mailbox: str | None = None, hours: int = 48):
     """Compare sent emails with stored Hanna drafts.
     
     Returns how many drafts were accepted unchanged vs modified.
+    Mailbox defaults to the first SHARED_MAILBOXES entry if not specified.
     """
+    if mailbox is None:
+        mailbox = _default_feedback_mailbox()
     try:
         result = await feedback.check_feedback(mailbox=mailbox, hours=hours)
         return result
