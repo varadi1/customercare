@@ -1,4 +1,12 @@
-"""Feedback loop: compare sent emails with stored drafts."""
+"""Feedback loop: compare sent emails with stored drafts.
+
+v4 — 2026-02-27 fixes:
+  - Body match threshold raised to 0.5 (was 0.15)
+  - Pending status for <24h drafts without conv match
+  - Reliable vs uncertain match separation in stats
+  - HTML-level Hanna banner strip (before html→text)
+  - Hungarian Outlook Web quote pattern added
+"""
 
 from __future__ import annotations
 
@@ -14,6 +22,34 @@ from .draft_store import get_recent_drafts
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
+# ─── Text Processing ─────────────────────────────────────────────────────────
+
+
+def _strip_hanna_banner_html(html: str) -> str:
+    """Remove Hanna AI Draft banner at HTML level BEFORE text extraction.
+    
+    The banner is a <div style="background:#f0f0f0; border-left:3px solid #999">
+    block at the top of the draft.
+    """
+    if not html:
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Strategy 1: find div with background:#f0f0f0 style (Hanna banner)
+    for div in soup.find_all("div"):
+        style = (div.get("style") or "").replace(" ", "").lower()
+        if "background:#f0f0f0" in style or "background-color:#f0f0f0" in style:
+            div.decompose()
+            break
+
+    # Strategy 2: find any element containing "Hanna AI Draft" or "🤖 Hanna"
+    for el in soup.find_all(string=re.compile(r"(Hanna AI Draft|🤖\s*Hanna)", re.IGNORECASE)):
+        parent = el.find_parent("div") or el.find_parent("p") or el.find_parent("td")
+        if parent:
+            parent.decompose()
+
+    return str(soup)
+
 
 def _html_to_text(html: str) -> str:
     """Strip HTML to plain text for comparison."""
@@ -23,100 +59,67 @@ def _html_to_text(html: str) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
-def _strip_hanna_banner_text(text: str) -> str:
-    """Remove Hanna AI Draft banner from plain text."""
-    if not text:
-        return text
-    # Remove lines containing Hanna banner markers
-    lines = text.split("\n")
-    clean_lines = []
-    skip = False
-    for line in lines:
-        stripped = line.strip()
-        # Start of Hanna banner
-        if "Hanna AI Draft" in stripped and ("Confidence" in stripped or "Forrás" in stripped):
-            skip = True
-            continue
-        if skip:
-            # Banner typically ends before "Tisztelt" or after an empty line following source info
-            if stripped.startswith("Tisztelt") or stripped.startswith("Köszön"):
-                skip = False
-                clean_lines.append(line)
-            elif "Forrás:" in stripped or "Dash:" in stripped or "Pályázó kérdése:" in stripped:
-                continue  # still in banner
-            elif stripped == "":
-                skip = False  # empty line = end of banner
-            else:
-                skip = False
-                clean_lines.append(line)
-        else:
-            # Also catch single-line banner format
-            if "🤖 Hanna AI Draft" in stripped:
-                continue
-            clean_lines.append(line)
-    return "\n".join(clean_lines)
-
-
 def _extract_reply_text(html: str) -> str:
     """Extract only the reply portion from a sent email HTML, removing quoted original.
     
-    Works at HTML level to identify quote boundaries, then extracts text.
-    Handles: divRplyFwdMsg, border-top #E1E1E1, <hr> dividers, Original Message.
+    Handles: divRplyFwdMsg, border-top #E1E1E1, <hr> dividers, Original Message,
+    Hungarian OWA "Feladó:/Küldés ideje:" pattern.
     """
     if not html:
         return ""
     soup = BeautifulSoup(html, "html.parser")
-    
+
+    def _text_before(element) -> str:
+        texts = []
+        for el in element.previous_siblings:
+            t = el.get_text(separator="\n", strip=True) if hasattr(el, "get_text") else str(el).strip()
+            if t:
+                texts.append(t)
+        return "\n".join(reversed(texts)).strip()
+
     # Strategy 1: <div id="divRplyFwdMsg"> (Desktop Outlook)
     reply_div = soup.find(id="divRplyFwdMsg")
     if reply_div:
-        # Get all text BEFORE this div
-        texts = []
-        for el in reply_div.previous_siblings:
-            t = el.get_text(separator="\n", strip=True) if hasattr(el, 'get_text') else str(el).strip()
-            if t:
-                texts.append(t)
-        # Also remove <hr> separators from the text
-        result = "\n".join(reversed(texts))
-        return result.strip()
-    
+        return _text_before(reply_div)
+
     # Strategy 2: border-top solid #E1E1E1 (OWA/new Outlook)
     for div in soup.find_all("div"):
         style = div.get("style", "") or ""
         if "border-top" in style and "#E1E1E1" in style:
-            texts = []
-            for el in div.previous_siblings:
-                t = el.get_text(separator="\n", strip=True) if hasattr(el, 'get_text') else str(el).strip()
-                if t:
-                    texts.append(t)
-            result = "\n".join(reversed(texts))
-            return result.strip()
-    
-    # Strategy 3: text-level — find "From:" / "Feladó:" pattern
+            return _text_before(div)
+
+    # Strategy 3: <hr> followed by quote block
+    for hr in soup.find_all("hr"):
+        result = _text_before(hr)
+        if result and len(result) > 20:
+            return result
+
+    # Strategy 4: text-level patterns
     full_text = soup.get_text(separator="\n", strip=True)
-    
-    # Look for common reply divider patterns
+
     patterns = [
-        r"\n\s*From:.*?\nSent:",  # English Outlook
-        r"\n\s*Feladó:.*?\nElküldve:",  # Hungarian Outlook
-        r"-{3,}\s*Original Message\s*-{3,}",  # Original Message marker
+        r"\n\s*From:.*?\nSent:",                          # English Outlook
+        r"\n\s*Feladó:.*?\nKüldés ideje:",                 # Hungarian OWA
+        r"\n\s*Feladó:.*?\nElküldve:",                     # Hungarian Desktop Outlook
+        r"\n\s*Feladó:.*?\nDátum:",                        # Hungarian alt
+        r"-{3,}\s*Original Message\s*-{3,}",               # Original Message marker
+        r"-{3,}\s*Eredeti üzenet\s*-{3,}",                 # Hungarian Original Message
     ]
-    
+
     for pattern in patterns:
         match = re.search(pattern, full_text, re.IGNORECASE | re.DOTALL)
         if match:
-            # Return everything before the match
-            # Also strip any trailing <hr> equivalent (dashes, underscores)
-            reply_text = full_text[:match.start()]
+            reply_text = full_text[: match.start()]
             reply_text = re.sub(r"\n\s*[-_=]{3,}\s*$", "", reply_text)
             return reply_text.strip()
-    
-    # No quote found — return full text
+
     return full_text
 
 
 def _similarity(a: str, b: str) -> float:
     """Return similarity ratio between two strings (0-1)."""
+    if not a or not b:
+        return 0.0
     return SequenceMatcher(None, a, b).ratio()
 
 
@@ -125,11 +128,30 @@ def _norm_subject(s: str) -> str:
     return re.sub(r"^(re:|fw:|fwd:)\s*", "", (s or "").lower().strip())
 
 
+# ─── Main Feedback Check ─────────────────────────────────────────────────────
+
+# Thresholds
+BODY_MATCH_MIN_SIM = 0.50       # body-match must exceed this to count
+PENDING_HOURS = 24              # drafts younger than this without conv-match → pending
+UNCHANGED_THRESHOLD = 0.85
+MODIFIED_THRESHOLD = 0.30
+
+
 async def check_feedback(mailbox: str, hours: int = 48) -> dict:
-    """Compare sent emails with stored drafts."""
+    """Compare sent emails with stored drafts.
+
+    Match strategies (in order):
+      1. conversationId match (reliable)
+      2. subject match (reliable)
+      3. body similarity brute-force (only if sim ≥ 0.50)
+      4. draft_consumed check (draft disappeared from Drafts folder)
+
+    Drafts < 24h old without a reliable match → 'pending' (not counted).
+    """
     headers = get_auth_headers()
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_utc = datetime.now(timezone.utc)
 
     drafts = get_recent_drafts(hours=hours, mailbox=mailbox)
     if not drafts:
@@ -140,7 +162,7 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             "mailbox": mailbox,
         }
 
-    # Get sent emails
+    # ── Fetch sent emails (paginate up to 500) ──
     sent_emails: list[dict] = []
     async with httpx.AsyncClient(timeout=60) as client:
         sent_url = f"{GRAPH_BASE}/users/{mailbox}/mailFolders/SentItems/messages"
@@ -166,10 +188,11 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             next_link = data.get("@odata.nextLink")
             pages += 1
 
-    # Index sent emails
+    # ── Index sent emails ──
     sent_by_conv: dict[str, list[dict]] = {}
     sent_by_subj: dict[str, list[dict]] = {}
     sent_text_cache: dict[str, str] = {}
+
     for email in sent_emails:
         eid = email.get("id", "")
         conv_id = email.get("conversationId", "")
@@ -178,23 +201,10 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
         subj = _norm_subject(email.get("subject", ""))
         if subj:
             sent_by_subj.setdefault(subj, []).append(email)
-        # Extract reply-only text
         raw_html = email.get("body", {}).get("content", "")
         sent_text_cache[eid] = _extract_reply_text(raw_html)
 
-    results = {
-        "drafts_checked": len(drafts),
-        "sent_found": 0,
-        "accepted_unchanged": 0,
-        "accepted_modified": 0,
-        "not_sent": 0,
-        "match_by_conv": 0,
-        "match_by_subject": 0,
-        "match_by_body": 0,
-        "details": [],
-    }
-
-    # Check which drafts still exist
+    # ── Check which drafts still exist in Drafts folder ──
     draft_ids = [d.get("draft_id", "") for d in drafts if d.get("draft_id")]
     existing_draft_ids: set[str] = set()
     if draft_ids:
@@ -208,26 +218,63 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
                 except Exception:
                     pass
 
+    # ── Results structure ──
+    results = {
+        "drafts_checked": len(drafts),
+        "sent_found": 0,
+        "accepted_unchanged": 0,
+        "accepted_modified": 0,
+        "heavily_modified": 0,
+        "not_sent": 0,
+        "pending": 0,
+        "draft_consumed_no_match": 0,
+        # Reliable vs uncertain breakdown
+        "reliable_matches": 0,       # conv or subject match
+        "uncertain_matches": 0,      # body match (sim ≥ 0.50)
+        "match_by_conv": 0,
+        "match_by_subject": 0,
+        "match_by_body": 0,
+        "details": [],
+    }
+
     matched_sent_ids: set[str] = set()
 
     for draft in drafts:
         conv_id = draft.get("conversation_id", "")
-        # Clean draft text: strip Hanna banner
-        draft_html = draft.get("draft_html", "")
-        draft_text_raw = _html_to_text(draft_html)
-        draft_text = _strip_hanna_banner_text(draft_text_raw)
         draft_subj = _norm_subject(draft.get("subject", ""))
 
+        # Clean draft text: strip Hanna banner at HTML level, then extract text
+        draft_html = draft.get("draft_html", "")
+        clean_html = _strip_hanna_banner_html(draft_html)
+        draft_text = _html_to_text(clean_html)
+
+        # Determine draft age
+        draft_ts = draft.get("created_at")
+        draft_age_hours = None
+        if draft_ts:
+            try:
+                if isinstance(draft_ts, str):
+                    dt = datetime.fromisoformat(draft_ts.replace("Z", "+00:00"))
+                else:
+                    dt = draft_ts
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                draft_age_hours = (now_utc - dt).total_seconds() / 3600
+            except Exception:
+                pass
+
+        # ── Strategy 1: conversationId match (RELIABLE) ──
         candidates = sent_by_conv.get(conv_id, []) if conv_id else []
         match_method = "conv"
 
+        # ── Strategy 2: subject match (RELIABLE) ──
         if not candidates and draft_subj:
             candidates = sent_by_subj.get(draft_subj, [])
             match_method = "subject"
 
+        # Find best similarity among candidates
         best_sim = 0.0
         best_sent_id = ""
-
         if candidates:
             for sent in candidates:
                 sid = sent.get("id", "")
@@ -239,7 +286,12 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
                     best_sim = sim
                     best_sent_id = sid
 
-        if best_sim < 0.3 and draft_text and len(draft_text) > 30:
+        reliable_match = match_method in ("conv", "subject") and best_sim >= 0.10
+
+        # ── Strategy 3: body brute-force (UNRELIABLE, high threshold) ──
+        if not reliable_match and draft_text and len(draft_text) > 30:
+            body_best_sim = 0.0
+            body_best_id = ""
             for email in sent_emails:
                 sid = email.get("id", "")
                 if sid in matched_sent_ids:
@@ -248,21 +300,46 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
                 if not sent_text or len(sent_text) < 30:
                     continue
                 sim = _similarity(draft_text, sent_text)
-                if sim > best_sim:
-                    best_sim = sim
-                    best_sent_id = sid
-                    match_method = "body"
+                if sim > body_best_sim:
+                    body_best_sim = sim
+                    body_best_id = sid
 
+            # Only accept body match if similarity is high enough
+            if body_best_sim >= BODY_MATCH_MIN_SIM:
+                best_sim = body_best_sim
+                best_sent_id = body_best_id
+                match_method = "body"
+                reliable_match = False
+            # else: don't use body match at all
+
+        # ── Strategy 4: draft consumed check ──
         did = draft.get("draft_id", "")
         draft_consumed = did and did not in existing_draft_ids
 
-        if best_sim < 0.15 and not draft_consumed:
-            results["not_sent"] += 1
+        # ── Classify result ──
+
+        has_match = (reliable_match and best_sim >= 0.10) or (match_method == "body" and best_sim >= BODY_MATCH_MIN_SIM)
+
+        if not has_match and not draft_consumed:
+            # No match found — is it pending or not_sent?
+            if draft_age_hours is not None and draft_age_hours < PENDING_HOURS:
+                results["pending"] += 1
+                results["details"].append({
+                    "subject": draft.get("subject", "")[:60],
+                    "confidence": draft.get("confidence", ""),
+                    "similarity": 0.0,
+                    "match_method": "none",
+                    "status": "pending",
+                    "draft_age_hours": round(draft_age_hours, 1),
+                })
+            else:
+                results["not_sent"] += 1
             continue
 
-        if draft_consumed and best_sim < 0.15:
+        if draft_consumed and not has_match:
+            # Draft disappeared but no similar sent email found
+            results["draft_consumed_no_match"] += 1
             results["sent_found"] += 1
-            results["accepted_modified"] += 1
             results["details"].append({
                 "subject": draft.get("subject", "")[:60],
                 "confidence": draft.get("confidence", ""),
@@ -272,39 +349,37 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             })
             continue
 
+        # We have a match
         results["sent_found"] += 1
         if best_sent_id:
             matched_sent_ids.add(best_sent_id)
 
         if match_method == "conv":
             results["match_by_conv"] += 1
+            results["reliable_matches"] += 1
         elif match_method == "subject":
             results["match_by_subject"] += 1
+            results["reliable_matches"] += 1
         else:
             results["match_by_body"] += 1
+            results["uncertain_matches"] += 1
 
-        # Body matches are less reliable — flag them
-        match_reliable = match_method in ("conv", "subject")
         detail = {
             "subject": draft.get("subject", "")[:60],
             "confidence": draft.get("confidence", ""),
             "similarity": round(best_sim, 3),
             "match_method": match_method,
-            "match_reliable": match_reliable,
+            "reliable": match_method in ("conv", "subject"),
         }
 
-        if best_sim > 0.85:
+        if best_sim >= UNCHANGED_THRESHOLD:
             results["accepted_unchanged"] += 1
             detail["status"] = "accepted_unchanged"
-        elif best_sim > 0.3:
+        elif best_sim >= MODIFIED_THRESHOLD:
             results["accepted_modified"] += 1
             detail["status"] = "modified"
-        elif not match_reliable:
-            # Body match with low similarity — likely wrong match
-            results["accepted_modified"] += 1
-            detail["status"] = "uncertain_match"
         else:
-            results["accepted_modified"] += 1
+            results["heavily_modified"] += 1
             detail["status"] = "heavily_modified"
 
         results["details"].append(detail)
