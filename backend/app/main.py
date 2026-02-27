@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -60,6 +61,17 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+# ─── Obsidian ingest job state (non-blocking) ───────────────────────────────
+_obsidian_ingest_lock = asyncio.Lock()
+_obsidian_ingest_status = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "last_result": None,
+    "last_error": None,
+}
 
 
 # ─── Health ───────────────────────────────────────────────────────────────────
@@ -673,26 +685,70 @@ async def analytics_weekly_report(weeks: int = 1):
 
 # ─── Obsidian: Ingestion & Search ────────────────────────────────────────────
 
+async def _run_obsidian_ingest_job(vault_path: str, force: bool):
+    """Background ingest runner to avoid blocking API workers."""
+    async with _obsidian_ingest_lock:
+        _obsidian_ingest_status["running"] = True
+        _obsidian_ingest_status["started_at"] = datetime.now().isoformat()
+        _obsidian_ingest_status["finished_at"] = None
+        _obsidian_ingest_status["last_result"] = None
+        _obsidian_ingest_status["last_error"] = None
+        try:
+            result = await obsidian_ingest.ingest_vault(
+                vault_path=vault_path,
+                force=force,
+                collection_name="obsidian_notes",
+            )
+            _obsidian_ingest_status["last_result"] = result
+        except Exception as e:
+            _obsidian_ingest_status["last_error"] = str(e)
+        finally:
+            _obsidian_ingest_status["running"] = False
+            _obsidian_ingest_status["finished_at"] = datetime.now().isoformat()
+
+
 @app.post("/obsidian/ingest")
 async def ingest_obsidian(
+    background_tasks: BackgroundTasks,
     vault_path: str = "/app/obsidian-vault",
     force: bool = False,
+    wait: bool = False,
 ):
-    """Ingest Obsidian vault with incremental sync.
-    
-    Args:
-        vault_path: Path to Obsidian vault
-        force: If True, re-process all files regardless of hash
-    """
-    try:
-        result = await obsidian_ingest.ingest_vault(
-            vault_path=vault_path,
-            force=force,
-            collection_name="obsidian_notes"
-        )
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Ingest Obsidian vault. Default non-blocking; set wait=true for synchronous call."""
+    # Keep backward compatibility for callers that really want blocking behavior
+    if wait:
+        try:
+            result = await obsidian_ingest.ingest_vault(
+                vault_path=vault_path,
+                force=force,
+                collection_name="obsidian_notes",
+            )
+            return {"status": "ok", "mode": "sync", **result}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if _obsidian_ingest_status.get("running"):
+        return {
+            "status": "accepted",
+            "mode": "async",
+            "message": "Ingest already running",
+            **_obsidian_ingest_status,
+        }
+
+    background_tasks.add_task(_run_obsidian_ingest_job, vault_path, force)
+    return {
+        "status": "accepted",
+        "mode": "async",
+        "message": "Ingest started in background",
+        "running": True,
+        "started_at": datetime.now().isoformat(),
+    }
+
+
+@app.get("/obsidian/ingest/status")
+async def obsidian_ingest_status():
+    """Get current/last Obsidian ingest job status."""
+    return _obsidian_ingest_status
 
 
 @app.get("/obsidian/search")
