@@ -1,5 +1,9 @@
 """Feedback loop: compare sent emails with stored drafts.
 
+v5 — 2026-03-01:
+  - Feedback diff storage for heavily modified drafts
+  - Max 200 entries, 30 day retention
+
 v4 — 2026-02-27 fixes:
   - Body match threshold raised to 0.5 (was 0.15)
   - Pending status for <24h drafts without conv match
@@ -10,9 +14,11 @@ v4 — 2026-02-27 fixes:
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
+from pathlib import Path
 
 import httpx
 from bs4 import BeautifulSoup
@@ -126,6 +132,49 @@ def _similarity(a: str, b: str) -> float:
 def _norm_subject(s: str) -> str:
     """Normalize email subject for comparison."""
     return re.sub(r"^(re:|fw:|fwd:)\s*", "", (s or "").lower().strip())
+
+
+# ─── Feedback Diff Store ─────────────────────────────────────────────────────
+
+FEEDBACK_DIFF_PATH = Path("/app/data/feedback_diffs.json")
+FEEDBACK_DIFF_MAX = 200
+FEEDBACK_DIFF_RETENTION_DAYS = 30
+
+
+def _load_feedback_diffs() -> list[dict]:
+    """Load existing feedback diffs."""
+    if not FEEDBACK_DIFF_PATH.exists():
+        return []
+    try:
+        with open(FEEDBACK_DIFF_PATH) as f:
+            data = json.load(f)
+        return data.get("diffs", [])
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _store_feedback_diff(entry: dict) -> None:
+    """Append a feedback diff entry. FIFO, max 200, 30-day retention."""
+    diffs = _load_feedback_diffs()
+
+    # Retention: remove entries older than 30 days
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=FEEDBACK_DIFF_RETENTION_DAYS)).isoformat()
+    diffs = [d for d in diffs if d.get("created_at", "") >= cutoff]
+
+    # Dedup: skip if same subject already exists
+    subj = entry.get("subject", "")
+    if any(d.get("subject") == subj for d in diffs):
+        return
+
+    diffs.append(entry)
+
+    # FIFO: keep max 200
+    if len(diffs) > FEEDBACK_DIFF_MAX:
+        diffs = diffs[-FEEDBACK_DIFF_MAX:]
+
+    FEEDBACK_DIFF_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(FEEDBACK_DIFF_PATH, "w") as f:
+        json.dump({"diffs": diffs}, f, ensure_ascii=False, indent=2)
 
 
 # ─── Main Feedback Check ─────────────────────────────────────────────────────
@@ -381,6 +430,22 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
         else:
             results["heavily_modified"] += 1
             detail["status"] = "heavily_modified"
+
+            # Store feedback diff for heavily modified reliable matches
+            if match_method in ("conv", "subject") and best_sent_id:
+                sent_text = sent_text_cache.get(best_sent_id, "")
+                _store_feedback_diff({
+                    "id": f"diff_{now_utc.strftime('%Y%m%d_%H%M')}_{draft_subj[:20]}",
+                    "created_at": now_utc.isoformat(),
+                    "category": draft.get("category", ""),
+                    "subject": draft.get("subject", "")[:80],
+                    "similarity": round(best_sim, 3),
+                    "draft_text": draft_text[:500],
+                    "sent_text": sent_text[:500],
+                    "key_changes": [],
+                    "lesson": "",
+                    "match_method": match_method,
+                })
 
         results["details"].append(detail)
 

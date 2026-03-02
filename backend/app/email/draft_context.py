@@ -2,16 +2,152 @@
 
 Single endpoint that gives Hanna everything she needs to write a draft
 that matches colleague style and uses the right knowledge base context.
+
+v2 — 2026-03-01: Template matching + category confidence + feedback diffs
 """
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 from .style_learner import load_patterns, _categorize_email, _strip_quoted
 from ..rag import search as rag_search
 from ..rag.references import resolve_references_in_results
+
+# ─── Template System ──────────────────────────────────────────────────────────
+
+TEMPLATE_PATH = "/app/data/response_templates.json"
+FEEDBACK_DIFF_PATH = "/app/data/feedback_diffs.json"
+
+_template_cache: dict | None = None
+_template_cache_mtime: float = 0
+
+
+def _load_templates() -> dict:
+    """Load response templates with file-change caching."""
+    global _template_cache, _template_cache_mtime
+
+    p = Path(TEMPLATE_PATH)
+    if not p.exists():
+        return {}
+
+    mtime = p.stat().st_mtime
+    if _template_cache is not None and mtime == _template_cache_mtime:
+        return _template_cache
+
+    with open(p) as f:
+        data = json.load(f)
+
+    _template_cache = data.get("templates", {})
+    _template_cache_mtime = mtime
+    return _template_cache
+
+
+def _match_template(category: str, email_text: str, email_subject: str) -> dict | None:
+    """Find the best matching template for this email.
+
+    Returns the template dict with match_score, or None if no match.
+    """
+    templates = _load_templates()
+    if not templates:
+        return None
+
+    text_lower = (email_text + " " + email_subject).lower()
+    best_match = None
+    best_score = 0
+
+    for tid, tmpl in templates.items():
+        score = 0
+
+        # Category match (strong signal)
+        if category in tmpl.get("category_match", []):
+            score += 3
+
+        # Keyword match (additive)
+        keywords = tmpl.get("keyword_match", [])
+        matched_kw = [kw for kw in keywords if kw.lower() in text_lower]
+        score += len(matched_kw) * 1.5
+
+        if score > best_score and score >= 3:  # minimum threshold
+            best_score = score
+            best_match = {
+                "template_id": tid,
+                "template_name": tmpl.get("name", ""),
+                "template_text": tmpl.get("template_text", ""),
+                "variables": tmpl.get("variables", []),
+                "variable_hints": tmpl.get("variable_hints", {}),
+                "notes": tmpl.get("notes", ""),
+                "word_count_target": tmpl.get("word_count", 0),
+                "requires_system_action": tmpl.get("requires_system_action", False),
+                "confidence_boost": tmpl.get("confidence_boost", 0),
+                "match_score": round(best_score, 2),
+                "matched_keywords": matched_kw,
+            }
+
+    return best_match
+
+
+# ─── Category Confidence Thresholds ──────────────────────────────────────────
+
+CATEGORY_CONFIDENCE_THRESHOLDS = {
+    # RAG very reliable → lower threshold for "high"
+    "inverter": {"high": 0.45, "medium": 0.30},
+    "napelem": {"high": 0.45, "medium": 0.30},
+    "szaldo": {"high": 0.45, "medium": 0.30},
+    "jogosultsag": {"high": 0.50, "medium": 0.35},
+    # RAG less reliable → higher threshold
+    "ertesites_kau": {"high": 0.60, "medium": 0.45},
+    "meghatalmazott": {"high": 0.65, "medium": 0.50},
+    "altalanos": {"high": 0.55, "medium": 0.40},
+    "hatarido": {"high": 0.55, "medium": 0.40},
+    # Default
+    "_default": {"high": 0.55, "medium": 0.40},
+}
+
+
+def _get_confidence_thresholds(category: str) -> dict:
+    """Get confidence thresholds for a specific category."""
+    return CATEGORY_CONFIDENCE_THRESHOLDS.get(
+        category,
+        CATEGORY_CONFIDENCE_THRESHOLDS["_default"],
+    )
+
+
+# ─── Feedback Diff Hints ─────────────────────────────────────────────────────
+
+def _get_feedback_hints(category: str, max_hints: int = 3) -> list[dict]:
+    """Load feedback diff hints for this category."""
+    p = Path(FEEDBACK_DIFF_PATH)
+    if not p.exists():
+        return []
+
+    try:
+        with open(p) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    diffs = data.get("diffs", [])
+    # Filter by category, newest first
+    matching = [
+        d for d in diffs
+        if d.get("category", "") == category
+    ]
+    matching.sort(key=lambda d: d.get("created_at", ""), reverse=True)
+
+    return [
+        {
+            "lesson": d.get("lesson", ""),
+            "example_sent": d.get("sent_text", "")[:300],
+            "category": d.get("category", ""),
+            "similarity": d.get("similarity", 0),
+        }
+        for d in matching[:max_hints]
+        if d.get("lesson") or d.get("sent_text")
+    ]
 
 
 async def build_draft_context(
@@ -58,9 +194,34 @@ async def build_draft_context(
     # 4. Extract category-specific style guide
     style_guide = _build_style_guide(patterns, category)
 
-    # 5. Build response
-    # Determine if legal/business context is needed (→ suggest Réka consultation)
+    # 5. Determine if legal/business context is needed (→ suggest Réka consultation)
     needs_legal = _needs_legal_context(category, email_text, rag_results)
+
+    # 6. Template matching
+    matched_template = _match_template(category, email_text, email_subject)
+
+    # 7. Category-specific confidence thresholds
+    confidence_thresholds = _get_confidence_thresholds(category)
+
+    # 8. Suggested confidence based on RAG score + template boost
+    top_rag_score = rag_results[0].get("score", 0) if rag_results else 0
+
+    suggested_confidence = "low"
+    if top_rag_score >= confidence_thresholds["high"]:
+        suggested_confidence = "high"
+    elif top_rag_score >= confidence_thresholds["medium"]:
+        suggested_confidence = "medium"
+
+    # Template match boosts confidence
+    if matched_template and suggested_confidence != "high":
+        boost = matched_template.get("confidence_boost", 0)
+        if top_rag_score + boost >= confidence_thresholds["high"]:
+            suggested_confidence = "high"
+        elif top_rag_score + boost >= confidence_thresholds["medium"]:
+            suggested_confidence = "medium"
+
+    # 9. Feedback diff hints
+    feedback_hints = _get_feedback_hints(category)
 
     return {
         "rag_results": [
@@ -90,6 +251,11 @@ async def build_draft_context(
             "has_identifiers": bool(oetp_ids or pod_numbers),
         },
         "needs_legal_context": needs_legal,
+        # v2 fields:
+        "use_template": matched_template,
+        "confidence_thresholds": confidence_thresholds,
+        "suggested_confidence": suggested_confidence,
+        "feedback_hints": feedback_hints,
     }
 
 
