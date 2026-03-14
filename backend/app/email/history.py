@@ -182,8 +182,10 @@ async def ingest_historical_emails(
             seen_content_hashes.add(content_hash)
 
             sent_date = msg.get("sentDateTime", "")[:10]
-            msg_id_short = msg.get("id", "unknown")[:20]
-            source = f"email_reply:{mailbox}:{msg_id_short}"
+            # Use hash of full message ID for unique source (Graph API IDs share prefix per mailbox)
+            full_msg_id = msg.get("id", "unknown")
+            msg_id_hash = _hashlib.sha256(full_msg_id.encode()).hexdigest()[:16]
+            source = f"email_reply:{mailbox}:{msg_id_hash}"
 
             # Format for ingestion: subject + full body (answer + quoted question)
             full_text = f"Tárgy: {subject}\nMailbox: {mailbox}\nDátum: {sent_date}\n\n{body_text}"
