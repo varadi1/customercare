@@ -45,16 +45,17 @@ A keresési pipeline 5 lépésből áll:
 
 ## Tudásbázis
 
-- **9,723 chunk** PostgreSQL+pgvector-ban
-- **Knowledge Graph**: 932 entitás, 3,720 reláció
+- **9,972 chunk** PostgreSQL+pgvector-ban
+- **Knowledge Graph**: 1,455 entitás, 3,657 reláció, 225,849 entity-chunk link
 - Források: pályázati felhívás + mellékletek, GYIK, segédletek, közlemények, ~9,100 email Q&A pár
 - Programok: OETP (9,665), NPP2/RRF (56), Távhő (2)
+- **Cross-RAG**: Entitások automatikusan szinkronizálva a központi cross_rag adatbázisba
 
 ### Dokumentum típusok
 
 | Típus | Darab |
 |-------|-------|
-| Email válasz | 8,750 |
+| Email válasz | 8,927 |
 | Email kérdés | 418 |
 | Dokumentum | 319 |
 | Felhívás | 147 |
@@ -71,6 +72,19 @@ A keresési pipeline 5 lépésből áll:
 - **Confidence jelzés** — 🟢 magas / 🟡 közepes / 🔴 alacsony
 - **Attachment elemzés** — GPT-4o-mini Vision csatolmány analízis
 - **Stílus elemzés** — Kolléga stílus mintafelismerés a természetes válaszokhoz
+
+## Post-Ingest Automatizáció
+
+Minden ingest endpoint (`/ingest/text`, `/ingest/pdf`, `/ingest/email-pair`) után automatikusan fut:
+
+1. **Contextual Enrichment** — Template-alapú context prefix az embedding elé (doc_type szerint)
+2. **BM25 invalidáció** — Keyword index frissítés
+3. **KG Extraction** (BackgroundTask) — Determinisztikus entity extraction:
+   - Dokumentum és program entitás létrehozás
+   - Jogszabály-hivatkozás regex (magyar minta: `55/2025 Korm. rendelet`, `2011. évi CXCV. törvény`)
+   - Meglévő entitások text-match-elése (fogalom, szereplő, program, munkálat_típus)
+   - Entity-chunk linking
+4. **Cross-RAG Sync** — Entitások szinkronizálása a központi cross_rag adatbázisba
 
 ## Korábbi migráció
 
@@ -124,4 +138,4 @@ docker compose up -d
 
 ---
 
-*Készítette: Bob ⚡ — 2026-02-12 | Frissítve: 2026-03-11*
+*Készítette: Bob ⚡ — 2026-02-12 | Frissítve: 2026-03-15*
