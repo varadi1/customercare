@@ -36,6 +36,8 @@ from .obsidian import kg_extract
 from .obsidian import kg_search as obsidian_kg_search
 from .obsidian import cross_rag_enrich
 from . import analytics
+from . import cross_rag_api
+from .rag.post_ingest_kg_oetp import post_ingest_kg_oetp
 
 
 @asynccontextmanager
@@ -129,7 +131,7 @@ async def ingest_pdfs(pdf_dir: str = "/app/data/pdfs"):
 # ─── RAG: Ingestion ──────────────────────────────────────────────────────────
 
 @app.post("/ingest/text", response_model=IngestResult)
-async def ingest_text(doc: DocumentIngest):
+async def ingest_text(doc: DocumentIngest, background_tasks: BackgroundTasks):
     """Ingest a text/markdown document."""
     try:
         is_markdown = doc.source.endswith(".md") or doc.chunk_type == "faq"
@@ -145,6 +147,8 @@ async def ingest_text(doc: DocumentIngest):
             use_markdown_chunker=is_markdown,
         )
         BM25Index.get().invalidate()
+        # KG extraction in background
+        background_tasks.add_task(post_ingest_kg_oetp, doc.source)
         return IngestResult(
             chunks_created=count,
             source=doc.source,
@@ -156,6 +160,7 @@ async def ingest_text(doc: DocumentIngest):
 
 @app.post("/ingest/pdf", response_model=IngestResult)
 async def ingest_pdf(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     category: str = Form("general"),
     chunk_type: str = Form("document"),
@@ -188,6 +193,8 @@ async def ingest_pdf(
         temp_path.unlink(missing_ok=True)
 
         BM25Index.get().invalidate()
+        # KG extraction in background
+        background_tasks.add_task(post_ingest_kg_oetp, file.filename)
         return IngestResult(
             chunks_created=count,
             source=file.filename,
@@ -199,6 +206,7 @@ async def ingest_pdf(
 
 @app.post("/ingest/email-pair", response_model=IngestResult)
 async def ingest_email_pair(
+    background_tasks: BackgroundTasks,
     question: str,
     answer: str,
     source: str = "email_archive",
@@ -213,6 +221,8 @@ async def ingest_email_pair(
             category=category,
         )
         BM25Index.get().invalidate()
+        # KG extraction in background
+        background_tasks.add_task(post_ingest_kg_oetp, source)
         return IngestResult(
             chunks_created=count,
             source=source,
@@ -1336,3 +1346,36 @@ async def enrich_from_klara(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Cross-RAG endpoints ─────────────────────────────────────────────
+
+
+@app.get("/cross-rag/search")
+async def cross_rag_search(q: str, entity_type: str = None, limit: int = 20):
+    """Search entities across all RAG databases."""
+    try:
+        return await cross_rag_api.search_canonical(q, entity_type, limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/cross-rag/entity/{canonical_id}")
+async def cross_rag_entity(canonical_id: int):
+    """Get a canonical entity with all its source links and chunk counts."""
+    result = await cross_rag_api.get_canonical_entity(canonical_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Canonical entity not found")
+    return result
+
+
+@app.get("/cross-rag/stats")
+async def cross_rag_stats():
+    """Get cross-rag database statistics."""
+    return await cross_rag_api.get_stats()
+
+
+@app.get("/cross-rag/multi-db")
+async def cross_rag_multi_db(min_dbs: int = 2, entity_type: str = None, limit: int = 50):
+    """Get entities present in multiple databases."""
+    return await cross_rag_api.get_multi_db_entities(min_dbs, entity_type, limit)

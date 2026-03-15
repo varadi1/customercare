@@ -32,14 +32,23 @@ def embedding_to_pgvector(embedding: list[float]) -> str:
     return "[" + ",".join(f"{x:.6f}" for x in embedding) + "]"
 
 
-async def main(batch_size: int = 50, dry_run: bool = False):
+async def main(batch_size: int = 50, dry_run: bool = False, since: str = None):
     conn = await asyncpg.connect(DB_URL)
-    
+
     # Count chunks that need re-embedding
-    total = await conn.fetchval(
-        "SELECT count(*) FROM chunks WHERE content_enriched IS NOT NULL"
-    )
-    print(f"Total chunks with enriched content: {total}")
+    if since:
+        # Only re-embed chunks updated after a given timestamp
+        total = await conn.fetchval(
+            "SELECT count(*) FROM chunks WHERE content_enriched IS NOT NULL AND updated_at >= $1::timestamptz",
+            since,
+        )
+        print(f"Chunks with enriched content updated since {since}: {total}")
+    else:
+        total = await conn.fetchval(
+            "SELECT count(*) FROM chunks WHERE content_enriched IS NOT NULL"
+        )
+        print(f"Total chunks with enriched content: {total}")
+        print(f"TIP: Use --since '2026-03-15' to only re-embed recently changed chunks")
     
     if dry_run:
         sample = await conn.fetchrow(
@@ -61,14 +70,25 @@ async def main(batch_size: int = 50, dry_run: bool = False):
     
     async with httpx.AsyncClient(timeout=30.0) as client:
         while offset < total:
-            rows = await conn.fetch(
-                """SELECT id, content_enriched, content 
-                   FROM chunks 
-                   WHERE content_enriched IS NOT NULL 
-                   ORDER BY id 
-                   LIMIT $1 OFFSET $2""",
-                batch_size, offset
-            )
+            if since:
+                rows = await conn.fetch(
+                    """SELECT id, content_enriched, content
+                       FROM chunks
+                       WHERE content_enriched IS NOT NULL
+                         AND updated_at >= $3::timestamptz
+                       ORDER BY id
+                       LIMIT $1 OFFSET $2""",
+                    batch_size, offset, since,
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT id, content_enriched, content
+                       FROM chunks
+                       WHERE content_enriched IS NOT NULL
+                       ORDER BY id
+                       LIMIT $1 OFFSET $2""",
+                    batch_size, offset,
+                )
             
             if not rows:
                 break
@@ -112,6 +132,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch-size", type=int, default=50)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--since", type=str, default=None,
+                        help="Only re-embed chunks updated after this timestamp (e.g. '2026-03-15')")
     args = parser.parse_args()
-    
-    asyncio.run(main(batch_size=args.batch_size, dry_run=args.dry_run))
+
+    asyncio.run(main(batch_size=args.batch_size, dry_run=args.dry_run, since=args.since))
