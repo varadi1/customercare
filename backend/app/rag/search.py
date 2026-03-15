@@ -37,6 +37,18 @@ async def _get_pool() -> asyncpg.Pool:
     return _pool
 
 
+async def _semantic_search_with_embedding(
+    embedding: list[float],
+    top_k: int,
+    category: str | None = None,
+    chunk_type: str | None = None,
+    only_valid: bool = True,
+) -> list[dict]:
+    """Semantic search with a pre-computed embedding vector (used by HyDE)."""
+    embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+    return await _semantic_search_impl(embedding_str, top_k, category, chunk_type, only_valid)
+
+
 async def _semantic_search(
     query: str,
     top_k: int,
@@ -45,11 +57,20 @@ async def _semantic_search(
     only_valid: bool = True,
 ) -> list[dict]:
     """Pure semantic (embedding) search via PostgreSQL+pgvector."""
-    pool = await _get_pool()
-    
-    # Get query embedding
     query_embedding = embed_query(query)
     embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+    return await _semantic_search_impl(embedding_str, top_k, category, chunk_type, only_valid)
+
+
+async def _semantic_search_impl(
+    embedding_str: str,
+    top_k: int,
+    category: str | None = None,
+    chunk_type: str | None = None,
+    only_valid: bool = True,
+) -> list[dict]:
+    """Core semantic search implementation."""
+    pool = await _get_pool()
     
     # Build WHERE clauses
     where_clauses = ["embedding IS NOT NULL"]
@@ -296,25 +317,47 @@ async def search_async(
     4. Rerank (local BGE or Cohere fallback)
     5. Authority weighting
     """
+    import asyncio
     retrieval_k = settings.search_top_k
     final_k = top_k or settings.rerank_top_k
 
-    # Stage 0: Query expansion
-    queries = await expand_query_async(query)
-    print(f"[hanna-oetp] Query expansion: {queries}")
+    # Stage 0: HyDE + Query expansion (parallel)
+    hyde_embedding = None
+    if settings.hyde_enabled:
+        from .hyde import hyde_embed_query_async
+        hyde_coro = hyde_embed_query_async(query)
+    else:
+        async def _noop(): return None
+        hyde_coro = _noop()
+
+    hyde_embedding, queries = await asyncio.gather(
+        hyde_coro,
+        expand_query_async(query),
+    )
+    print(f"[hanna-oetp] Query expansion: {queries}, HyDE: {'yes' if hyde_embedding else 'no'}")
 
     # Stage 1+2: Search for each expanded query
     all_semantic = []
     all_bm25 = []
 
-    for q in queries:
-        semantic_results = await _semantic_search(
-            query=q,
-            top_k=retrieval_k,
-            category=category,
-            chunk_type=chunk_type,
-            only_valid=only_valid,
-        )
+    for i, q in enumerate(queries):
+        # First query uses HyDE embedding if available
+        if i == 0 and hyde_embedding is not None:
+            semantic_results = await _semantic_search_with_embedding(
+                embedding=hyde_embedding,
+                top_k=retrieval_k,
+                category=category,
+                chunk_type=chunk_type,
+                only_valid=only_valid,
+            )
+        else:
+            semantic_results = await _semantic_search(
+                query=q,
+                top_k=retrieval_k,
+                category=category,
+                chunk_type=chunk_type,
+                only_valid=only_valid,
+            )
         all_semantic.extend(semantic_results)
 
         # Use PostgreSQL BM25 instead of external BM25Index
@@ -338,29 +381,54 @@ async def search_async(
     except Exception as e:
         print(f"[hanna-oetp] KG search failed: {e}")
 
-    # Stage 3: RRF fusion across all results (semantic + BM25 + KG)
+    # Stage 2.7: Targeted priority source retrieval
+    # Problem: With ~9000 email chunks vs ~550 official chunks, emails dominate
+    # both semantic and BM25 retrieval, so official doc chunks (gyik, segédlet)
+    # may not appear in fused results at all.
+    # Solution: Run a parallel small search restricted to priority doc types.
+    priority_semantic = []
+    for ptype in ("gyik", "segédlet", "melléklet"):
+        try:
+            pres = await _semantic_search(
+                query=query, top_k=3,
+                chunk_type=ptype,
+                only_valid=only_valid,
+            )
+            priority_semantic.extend(pres)
+        except Exception:
+            pass
+
+    # Stage 3: RRF fusion across all results (semantic + BM25 + KG + priority)
     result_lists = [all_semantic]
     if all_bm25:
         result_lists.append(all_bm25)
     if kg_results:
         result_lists.append(kg_results)
-    
+    if priority_semantic:
+        result_lists.append(priority_semantic)
+
     fused = _reciprocal_rank_fusion(*result_lists) if result_lists else []
 
-    candidates = fused[:retrieval_k]
+    # Diversity cap: max 3 chunks per source doc to prevent email domination
+    candidates = _cap_per_source(fused, max_per_source=3, total=retrieval_k)
 
-    # Stage 3.5: Priority injection — ensure official docs get to reranker
+    # Stage 3.5: Priority injection — ensure diverse official doc types reach reranker
     candidates = _inject_priority_chunks(candidates, fused)
 
     # Stage 4: Rerank with the ORIGINAL query (not expanded)
+    # Request more results from reranker than final_k so authority floor
+    # has room to promote priority chunks that the reranker scored lower.
+    rerank_k = min(final_k + 5, len(candidates))
     if candidates:
         try:
-            reranked = await rerank(query, candidates, top_n=final_k)
-            # Stage 5: Authority weighting (uses authority_score from metadata)
-            return apply_authority_weighting(reranked)
+            reranked = await rerank(query, candidates, top_n=rerank_k)
+            # Stage 5: Authority weighting + floor (uses chunk_type from metadata)
+            weighted = apply_authority_weighting(reranked)
+            return weighted[:final_k]
         except Exception as e:
             print(f"[hanna-oetp] Rerank failed: {e}")
-            return apply_authority_weighting(candidates[:final_k])
+            weighted = apply_authority_weighting(candidates[:rerank_k])
+            return weighted[:final_k]
 
     return candidates[:final_k]
 
@@ -411,56 +479,75 @@ def get_collection_stats() -> dict:
     return loop.run_until_complete(_get_collection_stats_async())
 
 
+def _cap_per_source(results: list[dict], max_per_source: int = 3, total: int = 20) -> list[dict]:
+    """Limit results to max_per_source chunks per source document.
+
+    Preserves ranking order. Prevents any single document (e.g. one email thread)
+    from monopolizing all candidate slots before reranking.
+    """
+    counts: dict[str, int] = {}
+    capped = []
+    for doc in results:
+        source = doc.get("source", doc.get("id", ""))
+        counts[source] = counts.get(source, 0) + 1
+        if counts[source] <= max_per_source:
+            capped.append(doc)
+            if len(capped) >= total:
+                break
+    return capped
+
+
 def _inject_priority_chunks(candidates: list[dict], all_fused: list[dict]) -> list[dict]:
-    """Ensure official documents get a chance at the reranker stage.
-    
-    Problem: When many email chunks contain common keywords, they dominate 
-    both semantic and BM25 retrieval, pushing out official document chunks 
-    from the top-N candidates.
-    
-    Solution: If the top-N candidates don't include any priority chunk types,
-    scan the full fused results and inject the best priority chunks into
-    the candidate list (replacing the weakest email_reply candidates).
+    """Ensure diverse official document types get a chance at the reranker stage.
+
+    Problem: When many email chunks contain common keywords, they dominate
+    both semantic and BM25 retrieval, pushing out official document chunks
+    from the top-N candidates. Even when ONE priority type (e.g. felhívás)
+    is present, other relevant types (gyik, segédlet) may be missing.
+
+    Solution: For each priority chunk type that has relevant results in the
+    fused list but is NOT represented in candidates, inject the best chunk
+    of that type (replacing the weakest email candidates from the end).
     """
     from .authority import PRIORITY_CHUNK_TYPES
-    
-    # Check if candidates already have priority chunks
-    has_priority = any(
-        c.get("chunk_type", "") in PRIORITY_CHUNK_TYPES 
-        for c in candidates
-    )
-    if has_priority:
-        return candidates
-    
-    # Find priority chunks in the full fused results (beyond top-N)
-    priority_from_fused = [
-        r for r in all_fused 
-        if r.get("chunk_type", "") in PRIORITY_CHUNK_TYPES
-    ]
-    
-    if not priority_from_fused:
-        return candidates
-    
-    # Inject up to 3 priority chunks, replacing the weakest non-priority candidates
-    inject_count = min(3, len(priority_from_fused))
-    injected = 0
-    
-    for priority_chunk in priority_from_fused[:inject_count]:
-        # Don't inject if already in candidates (by ID)
-        pid = priority_chunk.get("id", "")
-        if any(c.get("id") == pid for c in candidates):
+
+    # Which priority types are already represented in candidates?
+    present_types = {
+        c.get("chunk_type", "") for c in candidates
+    } & PRIORITY_CHUNK_TYPES
+
+    # Find priority chunks in the full fused results, grouped by type
+    missing_type_best: dict[str, dict] = {}  # type -> best chunk not in candidates
+    candidate_ids = {c.get("id", "") for c in candidates}
+
+    for r in all_fused:
+        ct = r.get("chunk_type", "")
+        if ct not in PRIORITY_CHUNK_TYPES:
             continue
-        
-        # Replace the weakest non-priority candidate from the end
+        if ct in present_types:
+            continue
+        if r.get("id", "") in candidate_ids:
+            continue
+        # Keep only the best (first) chunk per missing type
+        if ct not in missing_type_best:
+            missing_type_best[ct] = r
+
+    if not missing_type_best:
+        return candidates
+
+    # Inject best chunk per missing priority type, replacing weakest non-priority from end
+    injected = 0
+    for ct, priority_chunk in missing_type_best.items():
         for j in range(len(candidates) - 1, -1, -1):
             if candidates[j].get("chunk_type", "") not in PRIORITY_CHUNK_TYPES:
                 candidates[j] = priority_chunk
                 injected += 1
                 break
-    
+
     if injected > 0:
-        print(f"[hanna-oetp] Injected {injected} priority chunks into reranker candidates")
-    
+        types_injected = list(missing_type_best.keys())
+        print(f"[hanna-oetp] Injected {injected} priority chunks ({types_injected}) into reranker candidates")
+
     return candidates
 
 

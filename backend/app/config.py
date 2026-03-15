@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     search_top_k: int = 20  # initial retrieval per method (semantic + BM25)
     rerank_top_k: int = 5  # final results after reranking
 
+    # HyDE
+    hyde_enabled: bool = True
+    hyde_model: str = "gpt-4o-mini"
+    hyde_timeout: float = 3.0
+    hyde_max_tokens: int = 350
+
+    answer_model: str = "gpt-4o-mini"
+    answer_max_tokens: int = 1500
+    answer_temperature: float = 0.1
+
     class Config:
         env_prefix = ""
 

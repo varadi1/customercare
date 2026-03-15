@@ -2,11 +2,14 @@
 
 import asyncio
 import json
+import os
 from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+import httpx
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -266,11 +269,25 @@ async def search(query: SearchQuery):
         except Exception as e:
             print(f"[hanna] Cross-ref resolution failed: {e}")
         
+        # Score threshold filtering
+        search_results = [SearchResult(**r) for r in results]
+        if query.min_score and query.min_score > 0 and search_results:
+            search_results = [r for r in search_results if (r.rerank_score or r.score or 0) >= query.min_score]
+
+        # Relevance assessment
+        top_score = search_results[0].rerank_score or search_results[0].score if search_results else 0.0
+        relevance_threshold = query.min_score if query.min_score and query.min_score > 0 else 0.35
+        relevance_sufficient = top_score >= relevance_threshold
+        abstain_msg = None if relevance_sufficient else "A rendelkezésre álló dokumentumok alapján erre a kérdésre nem található megbízható válasz."
+
         return SearchResponse(
-            results=[SearchResult(**r) for r in results],
+            results=search_results,
             referenced_chunks=ref_chunks,
             query=query.query,
-            total_found=len(results),
+            total_found=len(search_results),
+            top_score=round(top_score, 4),
+            relevance_sufficient=relevance_sufficient,
+            abstain_message=abstain_msg,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -804,6 +821,7 @@ async def search_obsidian_hybrid(
     instruction: str = "",
     compact: bool = False,
     graph: bool = True,
+    min_score: float = Query(0.0, ge=0.0, le=2.0, description="Minimum final score (recommended: 0.20 for grounded answers)"),
 ):
     """Hybrid search: semantic + BM25 + Knowledge Graph → RRF fusion → reranking.
     
@@ -831,6 +849,13 @@ async def search_obsidian_hybrid(
         results = search_result["results"]
         graph_context = search_result.get("graph_context")
 
+        # Score threshold filtering
+        if min_score > 0 and results:
+            results = [
+                r for r in results
+                if float(r.get("rerank_score") or r.get("score") or r.get("rrf_score") or 0) >= min_score
+            ]
+
         if compact:
             for r in results:
                 if "content" in r and len(r["content"]) > 200:
@@ -843,6 +868,13 @@ async def search_obsidian_hybrid(
         if rerank:
             method += "+rerank"
 
+        # Relevance assessment
+        top_score = 0.0
+        if results:
+            top_score = float(results[0].get("rerank_score") or results[0].get("score") or results[0].get("rrf_score") or 0)
+        relevance_threshold = min_score if min_score > 0 else 0.20
+        relevance_sufficient = top_score >= relevance_threshold
+
         response = {
             "results": results,
             "query": q,
@@ -851,13 +883,158 @@ async def search_obsidian_hybrid(
             "method": method,
             "compact": compact,
             "graph_boosted_count": graph_boosted,
+            "top_score": round(top_score, 4),
+            "relevance_sufficient": relevance_sufficient,
         }
+        if not relevance_sufficient:
+            response["abstain_message"] = "A keresett téma nem található megfelelő relevanciával az Obsidian vault-ban."
         if graph_context:
             response["graph_context"] = graph_context
 
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Obsidian Structured Answer Generation (#7) ─────────────────────────────
+
+OBSIDIAN_ANSWER_SYSTEM_PROMPT = """Te egy személyes tudásbázis (Obsidian vault) asszisztens vagy. A felhasználó kérdéseire KIZÁRÓLAG a megadott jegyzet-chunkök alapján válaszolsz.
+
+SZABÁLYOK:
+1. CSAK a [FORRÁS] blokkokban szereplő információk alapján válaszolj
+2. Hivatkozz a forrás fájlnevére és mappájára
+3. Ha a források NEM tartalmaznak választ → confidence: "insufficient"
+4. SOHA ne egészítsd ki saját tudásból
+5. Ha részben van válasz → válaszolj ami van, jelezd a hiányt
+
+VÁLASZ FORMÁTUM (szigorúan JSON):
+{
+  "answer": "A válasz szövege",
+  "sources": [
+    {"document": "fájlnév", "section": "mappa/szekció", "quote": "szó szerinti idézet"}
+  ],
+  "confidence": "high|medium|low|insufficient",
+  "unanswered_parts": null
+}"""
+
+OBSIDIAN_ANSWER_FEWSHOT = [
+    {
+        "role": "user",
+        "content": """Kérdés: Mi a Radix Next üzleti modellje?
+
+[FORRÁS 1] §Radix Next.md — 1_projects (relevancia: 91%)
+Szöveg: A Radix Next a NEÜ IT fejlesztési partnere. Fő tevékenység: OETP platform fejlesztés és üzemeltetés. Üzleti modell: megbízási szerződés alapú, havi díjas support + projekt alapú fejlesztés.
+
+[FORRÁS 2] Radix Next Kft.md — 3_resources/Companies (relevancia: 76%)
+Szöveg: Radix Next Kft. — IT fejlesztő cég, Budapest. Kapcsolat: info@radixnext.hu.""",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps({
+            "answer": "A Radix Next a NEÜ IT fejlesztési partnere, megbízási szerződés alapú üzleti modellel: havi díjas support és projekt alapú fejlesztés. Fő tevékenysége az OETP platform fejlesztése és üzemeltetése.",
+            "sources": [
+                {"document": "§Radix Next.md", "section": "1_projects", "quote": "Üzleti modell: megbízási szerződés alapú, havi díjas support + projekt alapú fejlesztés."}
+            ],
+            "confidence": "high",
+            "unanswered_parts": None,
+        }, ensure_ascii=False),
+    },
+]
+
+
+class ObsidianAnswerRequest(BaseModel):
+    query: str
+    limit: int = 10
+    folder: str | None = None
+    min_score: float = 0.20
+    model: str | None = None
+    max_context_chunks: int = 3
+
+
+@app.post("/obsidian/answer")
+async def obsidian_answer_endpoint(req: ObsidianAnswerRequest):
+    """Obsidian search + LLM structured answer with grounding."""
+    # 1. Search
+    search_result = await obsidian_search.search_obsidian_hybrid(
+        query=req.query, limit=req.limit, folder_filter=req.folder,
+        collection_name="obsidian_notes", use_reranker=True, use_graph=True,
+    )
+    results = search_result.get("results", [])
+
+    # 2. Score threshold
+    if req.min_score > 0 and results:
+        results = [r for r in results if float(r.get("rerank_score") or r.get("score") or r.get("rrf_score") or 0) >= req.min_score]
+
+    top_score = float(results[0].get("rerank_score") or results[0].get("score") or 0) if results else 0.0
+
+    if not results or top_score < req.min_score:
+        return {
+            "answer": "A keresett téma nem található megfelelő relevanciával az Obsidian vault-ban.",
+            "sources": [], "confidence": "insufficient", "unanswered_parts": req.query,
+            "model_used": None, "top_score": round(top_score, 4), "relevance_sufficient": False, "chunks_used": 0,
+        }
+
+    # 3. (#11) Format context — tight, structured, top N chunks
+    gen_results = results[:req.max_context_chunks]
+    context_parts = []
+    for i, r in enumerate(gen_results, 1):
+        fname = r.get("file_name", r.get("source", "?"))
+        folder = r.get("folder", "")
+        score = float(r.get("rerank_score") or r.get("score") or 0)
+        text = r.get("content", r.get("text", ""))
+        context_parts.append(f"[FORRÁS {i}] {fname} — {folder} (relevancia: {int(score * 100)}%)\nSzöveg: {text}\n---")
+    context_block = "\n\n".join(context_parts)
+    user_msg = f"Kérdés: {req.query}\n\n{context_block}"
+
+    # 4. (#12) Cascade routing + LLM call
+    from openai import OpenAI
+    query_type = _classify_query_complexity(req.query)
+    if req.model:
+        model = req.model
+    else:
+        model = _select_model(query_type, top_score, settings.answer_model)
+    client = OpenAI(api_key=settings.openai_api_key)
+    try:
+        messages = [
+            {"role": "system", "content": OBSIDIAN_ANSWER_SYSTEM_PROMPT},
+            *OBSIDIAN_ANSWER_FEWSHOT,
+            {"role": "user", "content": user_msg},
+        ]
+        resp = client.chat.completions.create(
+            model=model, messages=messages, temperature=settings.answer_temperature,
+            max_tokens=settings.answer_max_tokens, response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content
+        answer_data = json.loads(raw)
+    except Exception as e:
+        return {"answer": None, "error": f"LLM generation failed: {e}", "sources": [], "confidence": "error",
+                "model_used": model, "top_score": round(top_score, 4), "relevance_sufficient": True, "chunks_used": len(gen_results)}
+
+    # 5. Quote verification
+    chunk_texts = " ".join(r.get("content", r.get("text", "")) for r in gen_results)
+    for src in answer_data.get("sources", []):
+        quote = src.get("quote", "")
+        src["verified"] = bool(quote and quote in chunk_texts)
+
+    # 6. NLI faithfulness verification (best-effort, non-blocking)
+    nli_result = None
+    try:
+        nli_url = os.getenv("NLI_SERVICE_URL", "http://host.docker.internal:8107")
+        async with httpx.AsyncClient(timeout=10) as nli_client:
+            nli_resp = await nli_client.post(f"{nli_url}/verify-answer", json={
+                "answer": answer_data.get("answer", ""),
+                "context": chunk_texts,
+            })
+            if nli_resp.status_code == 200:
+                nli_result = nli_resp.json()
+                if nli_result.get("overall_verdict") == "unfaithful":
+                    answer_data["confidence"] = "low"
+                    answer_data["nli_warning"] = "NLI verifikáció ellentmondást talált egyes állításokban."
+    except Exception:
+        pass
+
+    return {**answer_data, "model_used": model, "query_type": query_type, "top_score": round(top_score, 4),
+            "relevance_sufficient": True, "chunks_used": len(gen_results), "nli_verification": nli_result}
 
 
 @app.get("/obsidian/stats")
@@ -1367,6 +1544,273 @@ async def cross_rag_entity(canonical_id: int):
     if not result:
         raise HTTPException(status_code=404, detail="Canonical entity not found")
     return result
+
+
+# ─── Structured Answer Generation (#7) ──────────────────────────────────────
+
+HANNA_ANSWER_SYSTEM_PROMPT = """Te az OETP (Otthoni Energiatároló Program) ügyfélszolgálati asszisztens vagy. A pályázók kérdéseire KIZÁRÓLAG a megadott forrás-chunkök alapján válaszolsz.
+
+SZABÁLYOK:
+1. CSAK a [FORRÁS] blokkokban szereplő információk alapján válaszolj
+2. Minden állításhoz kötelező szó szerinti idézet a forrásból (quote mező)
+3. Ha a források NEM tartalmaznak választ → confidence: "insufficient"
+4. SOHA ne egészítsd ki saját tudásból — inkább mondd hogy "nem tudom"
+5. Összegeket, határidőket, feltételeket PONTOSAN idézd — ne kerekíts, ne általánosíts
+6. Ha részben van válasz → válaszolj ami van, és jelezd a hiányt unanswered_parts-ban
+7. Használj kedves, segítőkész ügyfélszolgálati hangnemet
+
+VÁLASZ FORMÁTUM (szigorúan JSON):
+{
+  "answer": "A válasz szövege, közérthetően megfogalmazva",
+  "sources": [
+    {"document": "forrás neve", "section": "pont/kérdés szám", "quote": "szó szerinti idézet"}
+  ],
+  "confidence": "high|medium|low|insufficient",
+  "unanswered_parts": null
+}"""
+
+HANNA_ANSWER_FEWSHOT = [
+    {
+        "role": "user",
+        "content": """Kérdés: Mekkora a támogatás maximális összege?
+
+[FORRÁS 1] OETP Felhívás — 3.1. pont (relevancia: 95%)
+Szöveg: A támogatás összege legfeljebb 4.000.000 Ft lehet háztartásonként.
+
+[FORRÁS 2] OETP GYIK — 12. kérdés (relevancia: 82%)
+Szöveg: A pályázó háztartásonként legfeljebb 4 millió forint vissza nem térítendő támogatást igényelhet.""",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps({
+            "answer": "A támogatás maximális összege háztartásonként 4.000.000 Ft (vissza nem térítendő).",
+            "sources": [
+                {"document": "OETP Felhívás", "section": "3.1. pont", "quote": "A támogatás összege legfeljebb 4.000.000 Ft lehet háztartásonként."}
+            ],
+            "confidence": "high",
+            "unanswered_parts": None,
+        }, ensure_ascii=False),
+    },
+    {
+        "role": "user",
+        "content": """Kérdés: Lehet-e Dubajból pályázni?
+
+[FORRÁS 1] OETP Felhívás — 2.1. pont (relevancia: 35%)
+Szöveg: Pályázatot nyújthat be természetes személy, aki Magyarország területén állandó lakóhellyel rendelkezik.
+
+[FORRÁS 2] OETP GYIK — 3. kérdés (relevancia: 30%)
+Szöveg: A pályázó csak magyarországi lakóingatlana vonatkozásában nyújthat be pályázatot.""",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps({
+            "answer": "A program kizárólag Magyarország területén állandó lakóhellyel rendelkező természetes személyek számára érhető el, így külföldi (pl. dubaji) lakóhelyről sajnos nem lehet pályázni.",
+            "sources": [
+                {"document": "OETP Felhívás", "section": "2.1. pont", "quote": "Pályázatot nyújthat be természetes személy, aki Magyarország területén állandó lakóhellyel rendelkezik."}
+            ],
+            "confidence": "high",
+            "unanswered_parts": None,
+        }, ensure_ascii=False),
+    },
+]
+
+
+def _classify_query_complexity(query: str) -> str:
+    """#12 Cascade routing: classify query as 'simple' or 'complex'."""
+    import re
+    q = query.lower().strip()
+    simple_patterns = [
+        r'^(mennyi|mekkora|mikor|mikortól|meddig|hány|ki a|mi a|milyen)\b',
+        r'^(kell-e|lehet-e|szabad-e|van-e|köteles-e|jogosult-e)\b',
+        r'\b(mértéke|összege|határideje|határidő|feltétele|díja|bírság)\b',
+        r'\b(hány nap|hány hónap|hány év|hány százalék)\b',
+    ]
+    for pattern in simple_patterns:
+        if re.search(pattern, q):
+            return "simple"
+    complex_patterns = [
+        r'\b(hasonlítsd|összehasonlít|különbség|eltérés)\b',
+        r'\b(magyarázd|elemezd|fejts ki|részletezd)\b',
+        r'\b(milyen esetben|milyen feltételekkel.*és.*és)\b',
+        r'\b(hogyan változott|hogyan alakult)\b',
+    ]
+    for pattern in complex_patterns:
+        if re.search(pattern, q):
+            return "complex"
+    return "simple" if len(q) < 50 else "complex"
+
+
+def _select_model(query_type: str, top_score: float, default_model: str) -> str:
+    """#12 Cascade routing: select LLM based on query type + retrieval confidence."""
+    if query_type == "simple" and top_score >= 0.60:
+        return "gpt-4o-mini"
+    if top_score < 0.45 or query_type == "complex":
+        return "gpt-4o"
+    return default_model
+
+
+class HannaAnswerRequest(BaseModel):
+    query: str
+    top_k: int = 5
+    category: str | None = None
+    min_score: float = 0.35
+    model: str | None = None
+    max_context_chunks: int = 3
+
+
+@app.post("/answer")
+async def answer_endpoint(req: HannaAnswerRequest):
+    """Search + LLM structured answer with grounding and hallucination control."""
+    # 1. Search
+    results = await rag_search.search_async(
+        query=req.query,
+        top_k=req.top_k,
+        category=req.category,
+        only_valid=True,
+    )
+
+    # 2. Score threshold
+    if req.min_score > 0 and results:
+        results = [
+            r for r in results
+            if float(r.get("rerank_score") or r.get("score") or 0) >= req.min_score
+        ]
+
+    # 3. Relevance check
+    top_score = float(results[0].get("rerank_score") or results[0].get("score") or 0) if results else 0.0
+
+    if not results or top_score < req.min_score:
+        return {
+            "answer": "A rendelkezésre álló dokumentumok alapján erre a kérdésre nem található megbízható válasz. Kérem forduljon az ügyfélszolgálathoz.",
+            "sources": [],
+            "confidence": "insufficient",
+            "unanswered_parts": req.query,
+            "model_used": None,
+            "top_score": round(top_score, 4),
+            "relevance_sufficient": False,
+            "chunks_used": 0,
+        }
+
+    # 4. Format context (#11 context preparation)
+    gen_results = results[:req.max_context_chunks]
+    context_parts = []
+    for i, r in enumerate(gen_results, 1):
+        source = r.get("source", "?")
+        category = r.get("category", "")
+        score = float(r.get("rerank_score") or r.get("score") or 0)
+        text = r.get("text", "")
+        context_parts.append(
+            f"[FORRÁS {i}] {source} — {category} (relevancia: {int(score * 100)}%)\nSzöveg: {text}\n---"
+        )
+    context_block = "\n\n".join(context_parts)
+    user_msg = f"Kérdés: {req.query}\n\n{context_block}"
+
+    # 5. (#12) Cascade routing + (#10) VerbatimRAG for simple fact questions
+    from openai import OpenAI
+    query_type = _classify_query_complexity(req.query)
+
+    # Try extractive answer first for simple queries with high confidence
+    if query_type == "simple" and top_score >= 0.50:
+        try:
+            verbatim_url = os.getenv("VERBATIM_SERVICE_URL", "http://host.docker.internal:8108")
+            async with httpx.AsyncClient(timeout=5) as vc:
+                vr = await vc.post(f"{verbatim_url}/extract", json={
+                    "question": req.query,
+                    "chunks": [r.get("text", "") for r in gen_results],
+                })
+                if vr.status_code == 200:
+                    vdata = vr.json()
+                    if vdata.get("has_answer") and vdata.get("total_spans", 0) > 0:
+                        all_spans = []
+                        sources = []
+                        for sr in vdata["results"]:
+                            idx = sr["chunk_index"]
+                            r = gen_results[idx]
+                            source_name = r.get("source", "?")
+                            category = r.get("category", "")
+                            for span in sr["extracted_spans"]:
+                                all_spans.append(span)
+                                sources.append({"document": source_name, "section": category, "quote": span, "verified": True})
+                        return {
+                            "answer": " ".join(all_spans),
+                            "sources": sources,
+                            "confidence": "high",
+                            "unanswered_parts": None,
+                            "model_used": "verbatim-rag",
+                            "query_type": query_type,
+                            "top_score": round(top_score, 4),
+                            "relevance_sufficient": True,
+                            "chunks_used": len(gen_results),
+                            "extraction_method": "verbatim",
+                            "nli_verification": None,
+                        }
+        except Exception:
+            pass  # VerbatimRAG unavailable — fall through to generative
+
+    if req.model:
+        model = req.model
+    else:
+        model = _select_model(query_type, top_score, settings.answer_model)
+    client = OpenAI(api_key=settings.openai_api_key)
+    try:
+        messages = [
+            {"role": "system", "content": HANNA_ANSWER_SYSTEM_PROMPT},
+            *HANNA_ANSWER_FEWSHOT,
+            {"role": "user", "content": user_msg},
+        ]
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=settings.answer_temperature,
+            max_tokens=settings.answer_max_tokens,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content
+        answer_data = json.loads(raw)
+    except Exception as e:
+        return {
+            "answer": None,
+            "error": f"LLM generation failed: {e}",
+            "sources": [],
+            "confidence": "error",
+            "model_used": model,
+            "top_score": round(top_score, 4),
+            "relevance_sufficient": True,
+            "chunks_used": len(gen_results),
+        }
+
+    # 6. Quote verification
+    chunk_texts = " ".join(r.get("text", "") for r in gen_results)
+    for src in answer_data.get("sources", []):
+        quote = src.get("quote", "")
+        src["verified"] = bool(quote and quote in chunk_texts)
+
+    # 7. NLI faithfulness verification (best-effort, non-blocking)
+    nli_result = None
+    try:
+        nli_url = os.getenv("NLI_SERVICE_URL", "http://host.docker.internal:8107")
+        async with httpx.AsyncClient(timeout=10) as nli_client:
+            nli_resp = await nli_client.post(f"{nli_url}/verify-answer", json={
+                "answer": answer_data.get("answer", ""),
+                "context": chunk_texts,
+            })
+            if nli_resp.status_code == 200:
+                nli_result = nli_resp.json()
+                if nli_result.get("overall_verdict") == "unfaithful":
+                    answer_data["confidence"] = "low"
+                    answer_data["nli_warning"] = "NLI verifikáció ellentmondást talált egyes állításokban."
+    except Exception:
+        pass
+
+    return {
+        **answer_data,
+        "model_used": model,
+        "query_type": query_type,
+        "top_score": round(top_score, 4),
+        "relevance_sufficient": True,
+        "chunks_used": len(gen_results),
+        "nli_verification": nli_result,
+    }
 
 
 @app.get("/cross-rag/stats")

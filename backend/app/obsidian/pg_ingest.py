@@ -228,7 +228,92 @@ async def _ingest_file(
             context_prefix, original_content,
         )
 
+    # ── KG Extraction: wikilinks + YAML ────────────────────────────
+    try:
+        from .kg_extract import extract_wikilinks, extract_wikilink_relations
+        wl_entities = extract_wikilinks(content, relative_path)
+        wl_relations = extract_wikilink_relations(content, relative_path)
+
+        if wl_entities or wl_relations:
+            chunk_ids_for_kg = [
+                _generate_chunk_id(relative_path, i, file_hash) for i in range(len(chunks))
+            ]
+
+            for ent in wl_entities:
+                # Skip noisy entities (file extensions, paths, very short)
+                name = ent["name"]
+                if len(name) < 2 or "." in name and any(name.endswith(ext) for ext in (".jpg", ".png", ".pdf", ".docx", ".md")):
+                    continue
+
+                await pool.execute("""
+                    INSERT INTO kg_entities (name, type, source_file)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (name, type) DO UPDATE SET updated_at = NOW()
+                """, name, ent["type"], ent.get("source_file", ""))
+
+                entity_id = await pool.fetchval(
+                    "SELECT id FROM kg_entities WHERE name = $1 AND type = $2", name, ent["type"]
+                )
+
+                if entity_id:
+                    # Link to first chunk of this file
+                    for cid in chunk_ids_for_kg[:1]:
+                        await pool.execute("""
+                            INSERT INTO kg_entity_chunks (entity_id, chunk_id)
+                            VALUES ($1, $2)
+                            ON CONFLICT (entity_id, chunk_id) DO NOTHING
+                        """, entity_id, cid)
+
+            for rel in wl_relations:
+                src_id = await pool.fetchval(
+                    "SELECT id FROM kg_entities WHERE name = $1 LIMIT 1", rel["source_name"]
+                )
+                tgt_id = await pool.fetchval(
+                    "SELECT id FROM kg_entities WHERE name = $1 LIMIT 1", rel["target_name"]
+                )
+                if src_id and tgt_id and src_id != tgt_id:
+                    await pool.execute("""
+                        INSERT INTO kg_relations (source_id, target_id, relation_type, source_file)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT DO NOTHING
+                    """, src_id, tgt_id, rel.get("type", "LINKS_TO"), relative_path)
+
+    except Exception as e:
+        print(f"[obsidian-kg] KG extraction failed for {file_path.name}: {e}")
+
+    # ── Cross-RAG sync ────────────────────────────────────────────
+    try:
+        await _crossrag_sync_file(pool, relative_path)
+    except Exception as e:
+        print(f"[obsidian-kg] cross-rag sync failed for {file_path.name} (non-fatal): {e}")
+
     return len(chunks)
+
+
+async def _crossrag_sync_file(pool: asyncpg.Pool, file_path: str):
+    """Sync KG entities from a single file to cross_rag database."""
+    import sys, os
+    sys.path.insert(0, os.environ.get("CROSSRAG_SCRIPTS", "/app/scripts"))
+    os.environ.setdefault("CROSSRAG_DSN", "postgresql://klara:klara_docs_2026@host.docker.internal:5433/cross_rag")
+
+    from cross_rag_sync import sync_entities_to_crossrag, get_crossrag_pool, close_crossrag_pool
+
+    # Get entities associated with this file (via source_file or entity_chunks)
+    entities_rows = await pool.fetch("""
+        SELECT id, name, type FROM kg_entities
+        WHERE source_file = $1
+    """, file_path)
+
+    if not entities_rows:
+        return
+
+    entities = [{"id": str(e["id"]), "name": e["name"], "type": e["type"]} for e in entities_rows]
+
+    crossrag_pool = await get_crossrag_pool()
+    stats = await sync_entities_to_crossrag("obsidian_rag", entities, crossrag_pool)
+    if stats.get("created") or stats.get("linked_exact") or stats.get("linked_fuzzy"):
+        print(f"[obsidian-kg] cross-rag: {stats}")
+    await close_crossrag_pool()
 
 
 async def ingest_vault(

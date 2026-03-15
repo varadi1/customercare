@@ -32,12 +32,13 @@ AUTHORITY_WEIGHTS: dict[str, float] = {
 DEFAULT_WEIGHT = 0.45
 
 # How much authority affects the final score (0 = no effect, 1 = full effect)
-AUTHORITY_INFLUENCE = 0.40
+# Increased from 0.40 to 0.55 to ensure official docs outrank emails
+AUTHORITY_INFLUENCE = 0.55
 
 # Chunk types that should be guaranteed in top results when relevant
 PRIORITY_CHUNK_TYPES = {
-    "felhívás", "melléklet", "gyik", "közlemény",  # PostgreSQL doc_type
-    "palyazat_felhivas", "palyazat_melleklet", "kozlemeny",  # Legacy ChromaDB
+    "felhívás", "melléklet", "gyik", "közlemény", "segédlet",  # PostgreSQL doc_type
+    "palyazat_felhivas", "palyazat_melleklet", "kozlemeny", "segedlet",  # Legacy ChromaDB
 }
 
 
@@ -94,36 +95,58 @@ def apply_authority_weighting(results: list[dict], influence: float | None = Non
 
 def _apply_authority_floor(results: list[dict]) -> None:
     """Ensure high-authority chunks with decent scores are in the top results.
-    
-    If a priority chunk type (felhivas, melleklet, gyik, kozlemeny) has
-    pre_authority_score > 0.4 but is not in the top 3, swap it in.
-    
-    Also ensures at least one non-email_reply source appears in top 5
-    when available (diversity guarantee).
+
+    Three guarantees:
+    1. Priority chunks with decent relevance get into top 3
+    2. If top 5 are all emails, promote best non-email to position 2
+    3. Source-type diversity: ensure at least 2 distinct priority types in top 5
+       (e.g. felhívás + gyik, not just felhívás x3)
+
     Modifies the list in-place.
     """
     if len(results) <= 3:
         return
-    
+
+    EMAIL_TYPES = ("email_reply", "email_question", "email_qa", "lesson")
+
     # 1. Priority floor: promote priority chunks into top 3
     for i in range(3, len(results)):
         chunk_type = results[i].get("chunk_type", "")
         pre_score = results[i].get("pre_authority_score", 0)
-        
-        if chunk_type in PRIORITY_CHUNK_TYPES and pre_score > 0.4:
+
+        if chunk_type in PRIORITY_CHUNK_TYPES and pre_score > 0.3:
             # Find the lowest-ranked non-priority item in top 3 to swap with
             for j in range(2, -1, -1):
                 if results[j].get("chunk_type", "") not in PRIORITY_CHUNK_TYPES:
                     results[j], results[i] = results[i], results[j]
                     break
-    
-    # 2. Diversity guarantee: if top 5 are ALL email_reply, promote the best non-reply
+
+    # 2. Diversity guarantee: if top 5 are ALL email types, promote best non-email
     top5_types = [r.get("chunk_type", "") for r in results[:5]]
-    if all(t in ("email_reply", "email_question", "email_qa") for t in top5_types):
+    if all(t in EMAIL_TYPES for t in top5_types):
         for i in range(5, len(results)):
             ct = results[i].get("chunk_type", "")
-            if ct not in ("email_reply", "email_question", "email_qa"):
-                # Promote to position 2 (after best result, before the rest)
+            if ct not in EMAIL_TYPES:
                 item = results.pop(i)
                 results.insert(2, item)
+                break
+
+    # 3. Source-type diversity: ensure multiple priority types in top 5
+    # Only swap OUT email/lesson types — never displace felhívás or melléklet
+    PROTECTED_TYPES = {"felhívás", "palyazat_felhivas", "melléklet", "palyazat_melleklet"}
+    top5_priority_types = {
+        r.get("chunk_type", "") for r in results[:5]
+    } & PRIORITY_CHUNK_TYPES
+
+    if len(top5_priority_types) <= 1 and len(results) > 5:
+        for i in range(5, len(results)):
+            ct = results[i].get("chunk_type", "")
+            pre_score = results[i].get("pre_authority_score", 0)
+            if ct in PRIORITY_CHUNK_TYPES and ct not in top5_priority_types and pre_score > 0.15:
+                # Replace the weakest email in top 5 (never displace protected types)
+                for j in range(4, -1, -1):
+                    rj_type = results[j].get("chunk_type", "")
+                    if rj_type in EMAIL_TYPES:
+                        results[j], results[i] = results[i], results[j]
+                        break
                 break

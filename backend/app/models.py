@@ -34,6 +34,7 @@ class SearchQuery(BaseModel):
     category: Optional[str] = None
     chunk_type: Optional[str] = None
     only_valid: bool = True  # filter out expired chunks
+    min_score: Optional[float] = None  # Minimum score threshold (recommended: 0.35)
 
 
 class SearchResult(BaseModel):
@@ -69,6 +70,9 @@ class SearchResponse(BaseModel):
     referenced_chunks: list[ReferencedChunk] = []
     query: str
     total_found: int
+    top_score: float = 0.0
+    relevance_sufficient: bool = True
+    abstain_message: Optional[str] = None
 
 
 # --- Email ---

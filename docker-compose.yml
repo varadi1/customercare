@@ -17,7 +17,10 @@ services:
       - ./data:/app/data
       - /Users/varadiimre/obsidian-git-backup:/app/obsidian-vault:rw
       - ./backend/scripts:/app/scripts:ro
+      - ../scripts:/app/crossrag_scripts:ro
     environment:
+      - CROSSRAG_DSN=postgresql://klara:klara_docs_2026@host.docker.internal:5433/cross_rag
+      - CROSSRAG_SCRIPTS=/app/crossrag_scripts
       - EMBEDDING_BACKEND=bge-m3
       - BGE_M3_URL=http://host.docker.internal:8104
       - EMBEDDING_DIMENSIONS=1024
