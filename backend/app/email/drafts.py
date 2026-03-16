@@ -108,13 +108,13 @@ async def create_reply_draft(
         )
 
         # Step 2: Update the draft body with our generated content
-        # Add confidence banner at the top
-        confidence_banner = {
-            "high": '<div style="background:#d4edda;padding:8px;border-radius:4px;margin-bottom:16px">🟢 <b>Hanna - Magabiztos válasz</b></div>',
-            "medium": '<div style="background:#fff3cd;padding:8px;border-radius:4px;margin-bottom:16px">🟡 <b>Hanna - Részben biztos, kérlek ellenőrizd</b></div>',
-            "low": '<div style="background:#f8d7da;padding:8px;border-radius:4px;margin-bottom:16px">🔴 <b>Hanna - Bizonytalan, emberi válasz javasolt</b></div>',
+        # Add confidence icon at the top (icon only, no text — operator sees the Outlook category for details)
+        confidence_icon = {
+            "high": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="Hanna - Magabiztos válasz">🟢</div>',
+            "medium": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="Hanna - Részben biztos, kérlek ellenőrizd">🟡</div>',
+            "low": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="Hanna - Bizonytalan, emberi válasz javasolt">🔴</div>',
         }
-        banner = confidence_banner.get(confidence, confidence_banner["medium"])
+        banner = confidence_icon.get(confidence, confidence_icon["medium"])
 
         # Ensure proper UTF-8 encoding for Hungarian characters
         meta_charset = '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">'

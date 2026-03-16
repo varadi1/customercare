@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .style_learner import load_patterns, _categorize_email, _strip_quoted
+from .skip_filter import check_skip
 from ..rag import search as rag_search
 from ..rag.references import resolve_references_in_results
 
@@ -171,6 +172,29 @@ async def build_draft_context(
         - category_examples: real colleague response examples for this category
         - identifiers: extracted OETP/POD identifiers
     """
+    # 0. Skip filter — detect emails that don't need a Hanna draft
+    skip_info = check_skip(email_text, email_subject)
+    if skip_info["skip"]:
+        return {
+            "skip": True,
+            "skip_reason": skip_info["reason"],
+            "skip_category": skip_info["skip_category"],
+            "rag_results": [],
+            "referenced_chunks": [],
+            "category": skip_info["skip_category"],
+            "style_guide": {"available": False},
+            "identifiers": {
+                "oetp_ids": oetp_ids or [],
+                "pod_numbers": pod_numbers or [],
+                "has_identifiers": bool(oetp_ids or pod_numbers),
+            },
+            "needs_legal_context": {"should_consult_reka": False, "reason": "", "suggested_query": ""},
+            "use_template": None,
+            "confidence_thresholds": {},
+            "suggested_confidence": "skip",
+            "feedback_hints": [],
+        }
+
     # 1. RAG search
     rag_results = await rag_search.search_async(
         query=email_text[:2000],  # truncate for search
@@ -224,6 +248,9 @@ async def build_draft_context(
     feedback_hints = _get_feedback_hints(category)
 
     return {
+        "skip": False,
+        "skip_reason": None,
+        "skip_category": None,
         "rag_results": [
             {
                 "text": r.get("text", "")[:500],
