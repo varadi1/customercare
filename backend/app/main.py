@@ -438,6 +438,244 @@ async def get_draft_context(req: DraftContextRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── Draft Generate (grounded + coherent) ────────────────────────────────────
+
+DRAFT_GENERATE_SYSTEM = """Te az OETP (Otthoni Energiatároló Program) ügyfélszolgálatának levélíró asszisztense vagy.
+
+FELADATOD:
+Egy beérkező ügyfél-emailre kell VÁLASZLEVÉL TERVEZETET írnod, KIZÁRÓLAG az alábbi ELLENŐRZÖTT TÉNYEK alapján.
+
+SZIGORÚ SZABÁLYOK:
+1. CSAK az [ELLENŐRZÖTT TÉNY] blokkokban szereplő információkat használhatod.
+2. Ha a tények NEM fedik le a kérdést → írd meg hogy "kérdésére kollégánk hamarosan válaszol".
+3. SOHA ne egészítsd ki saját tudásból, ne találj ki dátumokat, összegeket, határidőket.
+4. Az ügyfél kérdésének MINDEN részére reagálj, ami a tényekből megválaszolható.
+5. Ha a tények csak RÉSZBEN fedik le → válaszolj ami van, a többire jelezd hogy kollégánk válaszol.
+
+STÍLUS:
+- Udvarias, hivatalos, de barátságos hangnem
+- Tegezés SOHA, magázás/önözés MINDIG
+- Használj feltételes módot: "amennyiben", "abban az esetben"
+- Tömör, lényegre törő — ne legyen feleslegesen hosszú
+- NE kezdd "Köszönjük megkeresését" sablonnal, hanem rögtön a lényegre térj
+
+VÁLASZ FORMÁTUM (szigorúan JSON):
+{
+  "body": "A levél szövege HTML formátumban (<p> tagekkel)",
+  "confidence": "high|medium|low",
+  "used_facts": [1, 2],
+  "unanswered_parts": null
+}"""
+
+DRAFT_GENERATE_FEWSHOT = [
+    {
+        "role": "user",
+        "content": """Beérkező email: "Mennyi a maximális támogatás és kell-e önerő?"
+Tárgy: Támogatás összege
+
+[ELLENŐRZÖTT TÉNY 1] (Felhivas_OETP.pdf)
+"A támogatás összege legfeljebb 4.000.000 Ft lehet háztartásonként."
+
+[ELLENŐRZÖTT TÉNY 2] (Felhivas_OETP.pdf)
+"A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest."
+
+Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps({
+            "body": "<p>Tisztelt Pályázó!</p><p>Tájékoztatjuk, hogy az Otthoni Energiatároló Program keretében a támogatás maximális összege háztartásonként 4.000.000 Ft. A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest.</p><p>Amennyiben további kérdése merülne fel, kérjük, forduljon hozzánk bizalommal.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség Zrt.</p>",
+            "confidence": "high",
+            "used_facts": [1, 2],
+            "unanswered_parts": None,
+        }, ensure_ascii=False),
+    },
+]
+
+
+class DraftGenerateRequest(BaseModel):
+    email_text: str
+    email_subject: str = ""
+    sender_name: str = ""
+    oetp_ids: list[str] = []
+    pod_numbers: list[str] = []
+    top_k: int = 5
+    max_context_chunks: int = 3
+    model: str | None = None
+
+
+@app.post("/draft/generate")
+async def draft_generate(req: DraftGenerateRequest):
+    """Generate a grounded, coherent email draft.
+
+    Pipeline:
+    1. draft_context (RAG + skip filter + style guide)
+    2. VerbatimRAG extracts verified spans from top chunks
+    3. LLM reformulates spans into a coherent, polite email
+    4. NLI verification (best-effort)
+    """
+    # 1. Draft context (includes skip filter)
+    ctx = await draft_context.build_draft_context(
+        email_text=req.email_text,
+        email_subject=req.email_subject,
+        oetp_ids=req.oetp_ids,
+        pod_numbers=req.pod_numbers,
+        top_k=req.top_k,
+    )
+
+    if ctx.get("skip"):
+        return {
+            "skip": True,
+            "skip_reason": ctx["skip_reason"],
+            "skip_category": ctx["skip_category"],
+            "body_html": None,
+            "confidence": "skip",
+            "sources": [],
+        }
+
+    rag_results = ctx.get("rag_results", [])
+    style = ctx.get("style_guide", {})
+    greeting = style.get("suggested_greeting", "Tisztelt Pályázó!")
+
+    if not rag_results:
+        return {
+            "skip": False,
+            "body_html": f"<p>{greeting}</p><p>Köszönjük megkeresését. Kérjük türelmét, munkatársunk hamarosan részletes választ ad.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség Zrt.</p>",
+            "confidence": "low",
+            "sources": [],
+            "method": "no_results",
+        }
+
+    top_chunks = rag_results[:req.max_context_chunks]
+    top_score = top_chunks[0].get("score", 0) if top_chunks else 0
+
+    # 2. Try VerbatimRAG for verified fact extraction
+    verified_facts = []
+    fact_sources = []
+    try:
+        verbatim_url = os.getenv("VERBATIM_SERVICE_URL", "http://host.docker.internal:8108")
+        async with httpx.AsyncClient(timeout=5) as vc:
+            vr = await vc.post(f"{verbatim_url}/extract", json={
+                "question": req.email_text[:2000],
+                "chunks": [r.get("text", "") for r in top_chunks],
+            })
+            if vr.status_code == 200:
+                vdata = vr.json()
+                if vdata.get("has_answer") and vdata.get("total_spans", 0) > 0:
+                    for sr in vdata["results"]:
+                        idx = sr["chunk_index"]
+                        r = top_chunks[idx]
+                        for span in sr["extracted_spans"]:
+                            verified_facts.append({
+                                "text": span,
+                                "source": r.get("source", "?"),
+                                "verified": True,
+                            })
+                            fact_sources.append({
+                                "document": r.get("source", "?"),
+                                "quote": span,
+                                "verified": True,
+                            })
+    except Exception:
+        pass  # VerbatimRAG unavailable — use raw chunks as fallback
+
+    # Fallback: if VerbatimRAG failed, use raw chunk texts as "facts"
+    if not verified_facts:
+        for r in top_chunks:
+            text = r.get("text", "")
+            if text:
+                verified_facts.append({
+                    "text": text[:500],
+                    "source": r.get("source", "?"),
+                    "verified": False,
+                })
+                fact_sources.append({
+                    "document": r.get("source", "?"),
+                    "quote": text[:200],
+                    "verified": False,
+                })
+
+    # 3. Build LLM prompt with verified facts
+    facts_block = ""
+    for i, f in enumerate(verified_facts, 1):
+        verified_tag = "✓ ellenőrzött" if f["verified"] else "forrásból"
+        facts_block += f'[ELLENŐRZÖTT TÉNY {i}] ({f["source"]}, {verified_tag})\n"{f["text"]}"\n\n'
+
+    style_hint = f"Stílus: {greeting} / Üdvözlettel:"
+    if style.get("tone_tips"):
+        style_hint += "\nHangnem: " + "; ".join(style["tone_tips"][:2])
+
+    user_msg = f"""Beérkező email: "{req.email_text[:1500]}"
+Tárgy: {req.email_subject}
+
+{facts_block}
+{style_hint}"""
+
+    # 4. LLM generation — reformulate facts into coherent email
+    from openai import OpenAI
+    model = req.model or "gpt-4o-mini"
+    client = OpenAI(api_key=settings.openai_api_key)
+
+    try:
+        messages = [
+            {"role": "system", "content": DRAFT_GENERATE_SYSTEM},
+            *DRAFT_GENERATE_FEWSHOT,
+            {"role": "user", "content": user_msg},
+        ]
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.15,
+            max_tokens=1000,
+            response_format={"type": "json_object"},
+        )
+        raw = resp.choices[0].message.content
+        draft_data = json.loads(raw)
+    except Exception as e:
+        # LLM failed — return raw facts as fallback
+        facts_html = "".join(f"<p>{f['text']}</p>" for f in verified_facts[:3])
+        return {
+            "skip": False,
+            "body_html": f"<p>{greeting}</p>{facts_html}<p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség Zrt.</p>",
+            "confidence": "low",
+            "sources": fact_sources,
+            "method": "llm_fallback",
+            "error": str(e),
+        }
+
+    body_html = draft_data.get("body", "")
+    confidence = draft_data.get("confidence", "medium")
+
+    # 5. NLI faithfulness verification (best-effort)
+    nli_result = None
+    try:
+        chunk_texts = " ".join(f["text"] for f in verified_facts)
+        nli_url = os.getenv("NLI_SERVICE_URL", "http://host.docker.internal:8107")
+        async with httpx.AsyncClient(timeout=10) as nli_client:
+            nli_resp = await nli_client.post(f"{nli_url}/verify-answer", json={
+                "answer": body_html,
+                "context": chunk_texts,
+            })
+            if nli_resp.status_code == 200:
+                nli_result = nli_resp.json()
+                if nli_result.get("overall_verdict") == "unfaithful":
+                    confidence = "low"
+    except Exception:
+        pass
+
+    return {
+        "skip": False,
+        "body_html": body_html,
+        "confidence": confidence,
+        "sources": fact_sources,
+        "method": "verbatim+llm" if any(f["verified"] for f in verified_facts) else "chunks+llm",
+        "model_used": model,
+        "facts_count": len(verified_facts),
+        "nli_verification": nli_result,
+        "suggested_confidence": ctx.get("suggested_confidence"),
+    }
+
+
 # ─── Email: Feedback ──────────────────────────────────────────────────────────
 
 def _default_feedback_mailbox() -> str:
