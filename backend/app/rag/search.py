@@ -146,6 +146,23 @@ async def _semantic_search_impl(
     return results
 
 
+def _build_or_tsquery(query: str) -> str:
+    """Build an OR-based tsquery string from a natural language query.
+
+    plainto_tsquery uses AND — if ANY token is missing from the chunk, score=0.
+    Customer emails use natural language ("cserélhetem-e"), not document terminology,
+    so AND is too strict. OR-based matching with ts_rank gives partial credit:
+    more matching tokens → higher rank, but missing one token doesn't kill recall.
+    """
+    import re
+    tokens = re.findall(r"[a-záéíóöőúüű0-9]+", query.lower())
+    # Keep tokens > 2 chars, deduplicate
+    tokens = list(dict.fromkeys(t for t in tokens if len(t) > 2))
+    if not tokens:
+        return query  # fallback to raw query
+    return " OR ".join(tokens)
+
+
 async def _bm25_search_pg(
     query: str,
     top_k: int,
@@ -153,41 +170,48 @@ async def _bm25_search_pg(
     chunk_type: str | None = None,
     only_valid: bool = True,
 ) -> list[dict]:
-    """BM25-style full-text search via PostgreSQL tsvector."""
+    """BM25-style full-text search via PostgreSQL tsvector.
+
+    Uses OR-based tsquery for better recall on natural language queries.
+    ts_rank still rewards chunks that match MORE tokens, so precision is maintained.
+    """
     pool = await _get_pool()
-    
+
+    # OR-based query for partial matching (customer emails ≠ document terminology)
+    or_query = _build_or_tsquery(query)
+
     # Build WHERE clauses
-    where_clauses = ["content_tsvector @@ plainto_tsquery('hungarian', $1)"]
-    params = [query]
+    where_clauses = ["content_tsvector @@ websearch_to_tsquery('hungarian', $1)"]
+    params = [or_query]
     param_idx = 2
-    
+
     if category:
         where_clauses.append(f"program = ${param_idx}")
         params.append(category)
         param_idx += 1
-    
+
     if chunk_type:
         where_clauses.append(f"doc_type = ${param_idx}")
         params.append(chunk_type)
         param_idx += 1
-    
+
     if only_valid:
         where_clauses.append(
             "(metadata->>'valid_to' IS NULL OR metadata->>'valid_to' = '')"
         )
-    
+
     params.append(top_k)
     limit_param = f"${param_idx}"
-    
+
     where_sql = " AND ".join(where_clauses)
-    
+
     sql = f"""
         SELECT id, doc_id, doc_type, program, title, content, content_enriched,
                metadata, authority_score, source_date,
-               ts_rank(content_tsvector, plainto_tsquery('hungarian', $1)) AS bm25_score
+               ts_rank(content_tsvector, websearch_to_tsquery('hungarian', $1)) AS bm25_score
         FROM chunks
         WHERE {where_sql}
-        ORDER BY ts_rank(content_tsvector, plainto_tsquery('hungarian', $1)) DESC
+        ORDER BY ts_rank(content_tsvector, websearch_to_tsquery('hungarian', $1)) DESC
         LIMIT {limit_param}
     """
     
