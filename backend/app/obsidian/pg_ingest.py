@@ -13,6 +13,7 @@ except ImportError:
     UNSTRUCTURED_AVAILABLE = False
 # --- AGENT ZERO MODOSITAS END ---
 
+import asyncio
 import hashlib
 import json
 from datetime import datetime
@@ -97,7 +98,9 @@ def scan_vault_files(vault_path: str) -> list[Path]:
         "4_archive", "Tags", "TaskNotes",
     }
     exclude_patterns = {".obsidian", ".trash"}
-    exclude_extensions = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".mp4", ".mov"}
+    exclude_extensions = {".png", ".jpg", ".jpeg", ".gif", ".pdf", ".mp4", ".mov", ".csv", ".xlsx", ".xls"}
+    # Skip files larger than 500KB to avoid blocking ingest with huge CSVs/logs
+    MAX_FILE_SIZE = 512_000
 
     for folder in vault.iterdir():
         if not folder.is_dir() or folder.name in exclude_patterns:
@@ -109,6 +112,11 @@ def scan_vault_files(vault_path: str) -> list[Path]:
                     and not any(exc in str(file_path) for exc in exclude_patterns)
                     and file_path.suffix.lower() not in exclude_extensions
                 ):
+                    try:
+                        if file_path.stat().st_size > MAX_FILE_SIZE:
+                            continue
+                    except OSError:
+                        continue
                     files.append(file_path)
 
     return files
@@ -146,20 +154,20 @@ async def _ingest_file(
     """Ingest a single file into PostgreSQL."""
 
     # --- AGENT ZERO PATCH START (Smart Loader) ---
-    content = ""
-    try:
-        # Ellenőrizzük, hogy Unstructured-el kell-e tölteni
+    def _read_file_sync():
         ext = file_path.suffix.lower()
         if UNSTRUCTURED_AVAILABLE and ext in ['.pdf', '.docx', '.doc', '.pptx', '.ppt', '.xlsx', '.xls', '.jpg', '.jpeg', '.png', '.eml', '.msg']:
-            print(f"[INGEST] Loading {file_path.name} with Unstructured...")
-            # 'single' mode: mindent egybe, 'fast' strategy: csak szöveg
+            print(f"[INGEST] Loading {file_path.name} with Unstructured...", flush=True)
             loader = UnstructuredFileLoader(str(file_path), mode="single", strategy="fast")
             docs = loader.load()
-            content = "\n\n".join([d.page_content for d in docs]).strip()
+            return "\n\n".join([d.page_content for d in docs]).strip()
         else:
-            # Hagyományos betöltés (Markdown, Text)
             with open(file_path, "r", encoding="utf-8") as f:
-                content = f.read().strip()
+                return f.read().strip()
+
+    content = ""
+    try:
+        content = await asyncio.to_thread(_read_file_sync)
     except Exception as e:
         print(f"[obsidian-pg] Failed to read {file_path}: {e}")
         return 0
@@ -181,10 +189,11 @@ async def _ingest_file(
     chunk_dicts = [{"content": c} for c in chunks]
     if ENRICHMENT_ENABLED:
         try:
-            chunk_dicts = enrich_chunks_batch(
+            chunk_dicts = await asyncio.to_thread(
+                enrich_chunks_batch,
                 chunk_dicts,
-                file_name=file_path.name,
-                folder_type=folder_type,
+                file_path.name,
+                folder_type,
             )
         except Exception as e:
             print(f"[obsidian-pg] Enrichment failed for {file_path}, proceeding without: {e}")
@@ -195,9 +204,9 @@ async def _ingest_file(
         for cd in chunk_dicts
     ]
 
-    # Generate embeddings
+    # Generate embeddings (sync HTTP call — run in thread to avoid blocking event loop)
     try:
-        embeddings = embed_texts(texts_for_embedding)
+        embeddings = await asyncio.to_thread(embed_texts, texts_for_embedding)
     except Exception as e:
         print(f"[obsidian-pg] Embedding failed for {file_path}: {e}")
         return 0
@@ -325,11 +334,23 @@ async def ingest_vault(
     vault = Path(vault_path)
 
     stored_hashes = await _get_stored_hashes()
-    files = scan_vault_files(vault_path)
-    print(f"[obsidian-pg] Found {len(files)} files in vault")
+
+    # Run file scanning and hashing in a single thread to avoid per-file overhead
+    def _scan_and_hash():
+        files = scan_vault_files(vault_path)
+        print(f"[obsidian-pg] Found {len(files)} files in vault", flush=True)
+        result = []
+        for f in files:
+            rel = str(f.relative_to(vault))
+            h = _calculate_file_hash(f)
+            result.append((f, rel, h))
+        return result
+
+    file_entries = await asyncio.to_thread(_scan_and_hash)
+    print(f"[obsidian-pg] Hashed {len(file_entries)} files", flush=True)
 
     stats = {
-        "total_files": len(files),
+        "total_files": len(file_entries),
         "processed_files": 0,
         "skipped_files": 0,
         "total_chunks": 0,
@@ -339,10 +360,9 @@ async def ingest_vault(
         "kg_stats": {"entities": 0, "relations": 0, "files_synced": 0, "deleted_cleanup": 0},
     }
 
-    for file_path in files:
-        relative_path = str(file_path.relative_to(vault))
-        current_hash = _calculate_file_hash(file_path)
-
+    # Build list of files that need processing
+    to_process = []
+    for file_path, relative_path, current_hash in file_entries:
         if not current_hash:
             stats["errors"].append(f"Failed to hash: {relative_path}")
             continue
@@ -351,11 +371,20 @@ async def ingest_vault(
             stats["skipped_files"] += 1
             continue
 
+        to_process.append((file_path, relative_path, current_hash))
+
+    print(f"[obsidian-pg] {len(to_process)} files to process, {stats['skipped_files']} skipped", flush=True)
+
+    for idx, (file_path, relative_path, current_hash) in enumerate(to_process):
+        # Yield control periodically so the event loop can serve healthchecks
+        if idx % 5 == 0:
+            await asyncio.sleep(0)
+
         is_update = relative_path in stored_hashes
 
         if is_update:
             deleted = await _delete_file_chunks(relative_path)
-            print(f"[obsidian-pg] Deleted {deleted} old chunks for {relative_path}")
+            print(f"[obsidian-pg] Deleted {deleted} old chunks for {relative_path}", flush=True)
             stats["changed_files"].append(relative_path)
         else:
             stats["new_files"].append(relative_path)
@@ -368,8 +397,7 @@ async def ingest_vault(
 
             # Incremental KG sync for changed/new files
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = await asyncio.to_thread(file_path.read_text, encoding="utf-8")
                 kg_result = await kg_extract.incremental_kg_update(
                     file_path=relative_path,
                     content=content,
@@ -381,7 +409,7 @@ async def ingest_vault(
                 print(f"[obsidian-pg] KG sync failed for {relative_path} (non-fatal): {e}")
 
             if stats["processed_files"] % 50 == 0:
-                print(f"[obsidian-pg] Progress: {stats['processed_files']} files, {stats['total_chunks']} chunks")
+                print(f"[obsidian-pg] Progress: {stats['processed_files']} files, {stats['total_chunks']} chunks", flush=True)
         except Exception as e:
             error_msg = f"Failed to ingest {relative_path}: {str(e)}"
             stats["errors"].append(error_msg)
@@ -389,7 +417,7 @@ async def ingest_vault(
 
     # KG cleanup: remove data for files no longer in vault
     try:
-        current_paths = {str(f.relative_to(vault)) for f in files}
+        current_paths = {rel for _, rel, _ in file_entries}
         deleted_cleanup = await kg_extract.cleanup_deleted_files(current_paths)
         stats["kg_stats"]["deleted_cleanup"] = deleted_cleanup.get("files_cleaned", 0)
     except Exception as e:
@@ -411,7 +439,7 @@ async def ingest_vault(
     print(f"[obsidian-pg] Ingest complete: {stats['processed_files']} files, "
           f"{stats['total_chunks']} chunks, {len(stats['errors'])} errors, "
           f"KG: {kg['files_synced']} synced, {kg['entities']}E/{kg['relations']}R extracted, "
-          f"{kg['deleted_cleanup']} deleted files cleaned")
+          f"{kg['deleted_cleanup']} deleted files cleaned", flush=True)
 
     return stats
 

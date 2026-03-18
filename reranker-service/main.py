@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
-"""BGE Reranker v2 M3 Service — Standalone FastAPI service for Mac Studio MPS."""
+"""BGE Reranker v2 M3 Service — Standalone FastAPI service for Mac Studio MPS.
 
+Memory management:
+- torch.mps.empty_cache() after every request (frees MPS tensor cache)
+- gc.collect() every N requests (frees Python-side fragmentation)
+- RSS watchdog: graceful shutdown if memory exceeds limit
+"""
+
+import gc
+import os
+import signal
+import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import torch
 from fastapi import FastAPI, HTTPException
@@ -13,6 +22,9 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 MODEL_NAME = "BAAI/bge-reranker-v2-m3"
+GC_EVERY_N = 50
+RSS_LIMIT_MB = 5000
+RSS_CHECK_EVERY_N = 20
 
 # ─── Global Model State ───────────────────────────────────────────────────────
 
@@ -20,6 +32,19 @@ _model = None
 _tokenizer = None
 _device = None
 _load_time = None
+_request_count = 0
+
+
+def _get_rss_mb() -> float:
+    """Get current RSS in MB (macOS)."""
+    import resource
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+
+
+def _graceful_shutdown():
+    """Signal self to restart (launchd KeepAlive will respawn)."""
+    print(f"[reranker] RSS {_get_rss_mb():.0f} MB > {RSS_LIMIT_MB} MB limit, restarting...")
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 @asynccontextmanager
@@ -41,7 +66,7 @@ async def lifespan(app: FastAPI):
     _model.eval()
 
     _load_time = time.time() - start
-    print(f"[reranker] Model loaded in {_load_time:.1f}s")
+    print(f"[reranker] Model loaded in {_load_time:.1f}s, RSS={_get_rss_mb():.0f} MB")
 
     yield
 
@@ -51,7 +76,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="BGE Reranker v2 M3 Service",
     description="Local reranking using BAAI/bge-reranker-v2-m3 on Mac Studio MPS",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -83,6 +108,8 @@ class HealthResponse(BaseModel):
     model: str
     device: str
     load_time_seconds: float
+    requests_served: int
+    rss_mb: int
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
@@ -95,12 +122,16 @@ async def health():
         model=MODEL_NAME,
         device=_device or "unknown",
         load_time_seconds=_load_time or 0,
+        requests_served=_request_count,
+        rss_mb=round(_get_rss_mb()),
     )
 
 
 @app.post("/rerank", response_model=RerankResponse)
 async def rerank(request: RerankRequest):
     """Rerank documents based on query relevance."""
+    global _request_count
+
     if _model is None:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
@@ -111,6 +142,8 @@ async def rerank(request: RerankRequest):
             device=_device,
             inference_time_ms=0,
         )
+
+    _request_count += 1
 
     # BGE reranker uses query-document pairs as input
     pairs = [[request.query, doc] for doc in request.documents]
@@ -145,6 +178,20 @@ async def rerank(request: RerankRequest):
         del enc, out
 
     inference_time = (time.time() - start) * 1000
+
+    # Level 1: free MPS tensor cache every request
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
+    # Level 2: periodic full GC
+    if _request_count % GC_EVERY_N == 0:
+        gc.collect()
+
+    # Level 3: RSS watchdog
+    if _request_count % RSS_CHECK_EVERY_N == 0:
+        rss = _get_rss_mb()
+        if rss > RSS_LIMIT_MB:
+            threading.Thread(target=_graceful_shutdown, daemon=True).start()
 
     # Build results
     results = [

@@ -25,42 +25,43 @@ async def _get_kg_pool() -> asyncpg.Pool:
     return _kg_pool
 
 
-async def kg_search(query: str, top_k: int = 10) -> list[dict]:
+async def kg_search(query: str, top_k: int = 10, only_valid: bool = True) -> list[dict]:
     """Knowledge Graph-based search expansion.
-    
+
     Pipeline:
     1. Extract entity names from query (ILIKE match in kg_entities)
     2. Find 1-hop neighbors via kg_relations
     3. Get chunks associated with matched + neighbor entities
     4. Return chunks in search result format
-    
+
     Args:
         query: Search query string
         top_k: Maximum chunks to return
-    
+        only_valid: If True, exclude expired chunks (valid_to set)
+
     Returns:
         List of chunk dicts compatible with search.py format
     """
     if not query.strip():
         return []
-    
+
     try:
         pool = await _get_kg_pool()
     except Exception as e:
         print(f"[kg-search] Pool connection failed: {e}")
         return []
-    
+
     try:
         # Step 1: Find entities matching query terms
         matched_entities = await _find_matching_entities(pool, query)
         if not matched_entities:
             return []
-        
+
         # Step 2: Expand to 1-hop neighbors
         all_entities = await _expand_entities_1hop(pool, matched_entities)
-        
+
         # Step 3: Get chunks for all entities (matched + neighbors)
-        chunks = await _get_entity_chunks(pool, all_entities, top_k)
+        chunks = await _get_entity_chunks(pool, all_entities, top_k, only_valid)
         
         print(f"[kg-search] Query '{query}' → {len(matched_entities)} entities → "
               f"{len(all_entities)} total → {len(chunks)} chunks")
@@ -173,30 +174,35 @@ async def _expand_entities_1hop(pool: asyncpg.Pool, seed_entities: list[dict]) -
         return seed_entities  # Fallback to just seed entities
 
 
-async def _get_entity_chunks(pool: asyncpg.Pool, entities: list[dict], limit: int) -> list[dict]:
+async def _get_entity_chunks(pool: asyncpg.Pool, entities: list[dict], limit: int, only_valid: bool = True) -> list[dict]:
     """Get chunks associated with the given entities."""
     if not entities:
         return []
-    
+
     entity_ids = [e["id"] for e in entities]
-    
+
     try:
         # Join kg_entity_chunks with chunks table
-        sql = """
-            SELECT DISTINCT c.id, c.doc_id, c.doc_type, c.program, c.title, 
-                   c.content, c.content_enriched, c.metadata, c.authority_score, 
-                   c.source_date, 
+        valid_filter = ""
+        if only_valid:
+            valid_filter = "AND (c.metadata->>'valid_to' IS NULL OR c.metadata->>'valid_to' = '')"
+
+        sql = f"""
+            SELECT DISTINCT c.id, c.doc_id, c.doc_type, c.program, c.title,
+                   c.content, c.content_enriched, c.metadata, c.authority_score,
+                   c.source_date,
                    COUNT(ec.entity_id) as entity_count
             FROM chunks c
             INNER JOIN kg_entity_chunks ec ON c.id = ec.chunk_id
             WHERE ec.entity_id = ANY($1)
-            GROUP BY c.id, c.doc_id, c.doc_type, c.program, c.title, 
-                     c.content, c.content_enriched, c.metadata, c.authority_score, 
+            {valid_filter}
+            GROUP BY c.id, c.doc_id, c.doc_type, c.program, c.title,
+                     c.content, c.content_enriched, c.metadata, c.authority_score,
                      c.source_date
             ORDER BY entity_count DESC, c.authority_score DESC
             LIMIT $2
         """
-        
+
         chunk_rows = await pool.fetch(sql, entity_ids, limit)
         
         chunks = []

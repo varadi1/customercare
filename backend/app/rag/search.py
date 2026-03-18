@@ -401,7 +401,7 @@ async def search_async(
     kg_results = []
     try:
         from .kg_search import kg_search
-        kg_results = await kg_search(query, top_k=retrieval_k)  # Use original query, not expanded
+        kg_results = await kg_search(query, top_k=retrieval_k, only_valid=only_valid)
     except Exception as e:
         print(f"[hanna-oetp] KG search failed: {e}")
 
@@ -411,7 +411,7 @@ async def search_async(
     # may not appear in fused results at all.
     # Solution: Run a parallel small search restricted to priority doc types.
     priority_semantic = []
-    for ptype in ("gyik", "segédlet", "melléklet"):
+    for ptype in ("felhívás", "gyik", "segédlet", "melléklet", "közlemény"):
         try:
             pres = await _semantic_search(
                 query=query, top_k=3,
@@ -433,8 +433,8 @@ async def search_async(
 
     fused = _reciprocal_rank_fusion(*result_lists) if result_lists else []
 
-    # Diversity cap: max 3 chunks per source doc to prevent email domination
-    candidates = _cap_per_source(fused, max_per_source=3, total=retrieval_k)
+    # Diversity cap: max 2 chunks per source doc to prevent email domination
+    candidates = _cap_per_source(fused, max_per_source=2, total=retrieval_k)
 
     # Stage 3.5: Priority injection — ensure diverse official doc types reach reranker
     candidates = _inject_priority_chunks(candidates, fused)
