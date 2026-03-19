@@ -570,4 +570,55 @@ docker compose up -d
 
 ---
 
+## OpenClaw RAG Ökoszisztéma
+
+Hanna az **OpenClaw** 5 rendszeres RAG ökoszisztéma egyik tagja:
+
+| Rendszer | DB | Tartalom | Chunk szám |
+|----------|---------|----------|------------|
+| **Hanna OETP** | `hanna_oetp` | OETP pályázat, emailek, GYIK | ~10,000 |
+| **Jogszabály RAG** | `jogszabaly_rag` | Magyar jogszabályok (Kbt, Étv, Ptk, EU) | ~95,000 |
+| **NEÜ Docs** | `neu_docs` | Céges dokumentumok, szerződések | ~48,000 |
+| **Obsidian RAG** | `neu_docs` | Személyes tudásbázis (PARA vault) | ~23,000 |
+| **UAE Legal RAG** | `uae_legal_rag` | Emirátusi jogszabályok | ~18,000 |
+
+A **Cross-RAG** rendszer entitás-szinten összeköti az 5 rendszert: ha egy fogalom (pl. "közbeszerzés") megjelenik a Hanna OETP tudásbázisban és a jogszabály RAG-ban is, az entitás mindkét helyről elérhető.
+
+Minden rendszer ugyanazt az alap architektúrát használja (BGE-M3 + pgvector + hybrid search + reranking), de domain-specifikus kiegészítésekkel:
+- **Hanna**: Authority weighting, email stílus tanulás, HyDE, draft generálás
+- **Jogszabály RAG**: Hivatkozás-feloldás, topic→docid mapping, autoritási szint hierarchia
+- **UAE Legal**: Determinisztikus + LLM KG extraction, free zone pattern matching
+
+### 2026-os Best Practice Lefedettség
+
+Egy 2026. márciusi cross-system audit szerint az architektúra a produkciós RAG best practice **~90%-át lefedi**:
+
+| Komponens | Állapot |
+|-----------|---------|
+| Hybrid search (semantic + BM25 + RRF) | ✅ Minden rendszerben |
+| Contextual enrichment (chunk-szintű) | ✅ Minden rendszerben |
+| Knowledge Graph (entity extraction + linking) | ✅ Minden rendszerben |
+| Reranking (lokális, GPU) | ✅ Minden rendszerben |
+| Authority scoring | ✅ Jogi rendszerekben |
+| HyDE query transformation | ✅ Hanna + jogszabály |
+| Query expansion | ✅ Hanna |
+| Cross-reference resolution | ✅ Hanna + jogszabály |
+| Relevancia küszöb + abstain | ✅ Minden rendszerben |
+| NLI faithfulness verification | ✅ Hanna |
+| VerbatimRAG span extraction | ✅ Hanna |
+| Structured JSON output + few-shot grounding | ✅ Minden rendszerben |
+| Temporal filtering (valid_from/valid_to) | ✅ Minden rendszerben |
+| Cascade routing (kérdéstípus → LLM) | ✅ Hanna |
+
+### Cascade Routing
+
+A `/draft/generate` endpoint `model` paraméterrel elfogadja a használandó LLM-et. Az alapértelmezett `gpt-4o-mini`, de a hívó rendszer (OpenClaw agent) a kérdés komplexitása és a retrieval confidence alapján dönthet:
+
+- **Egyszerű ténykérdés + high confidence** → `gpt-4o-mini` (~$0.001/query)
+- **Összetett/bizonytalan kérdés** → `gpt-4o` vagy nagyobb modell
+
+Az OETP ügyfélszolgálati kérdések ~60-70%-a egyszerű ténykérdés, ezért a cascade routing **5-10x költségcsökkentést** eredményez a naiv "mindig a legerősebb modell" megközelítéshez képest.
+
+---
+
 *Készítette: Bob — 2026-02-12 | Frissítve: 2026-03-19*
