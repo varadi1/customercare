@@ -419,6 +419,8 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             "similarity": round(best_sim, 3),
             "match_method": match_method,
             "reliable": match_method in ("conv", "subject"),
+            "draft_text": draft_text if best_sim < 0.6 else "",
+            "sent_text": sent_text_cache.get(best_sent_id, "") if best_sim < 0.6 else "",
         }
 
         if best_sim >= UNCHANGED_THRESHOLD:
