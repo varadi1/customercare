@@ -12,6 +12,8 @@ from ..config import settings
 from .embeddings import embed_query
 from .reranker import rerank, get_status as _get_reranker_status
 from .authority import apply_authority_weighting
+from .compression import compress_results
+from .adaptive_k import get_adaptive_k
 
 
 def _get_reranker_mode() -> str:
@@ -342,8 +344,11 @@ async def search_async(
     5. Authority weighting
     """
     import asyncio
-    retrieval_k = settings.search_top_k
-    final_k = top_k or settings.rerank_top_k
+
+    # Adaptive k: adjust retrieval depth based on query complexity
+    adaptive = get_adaptive_k(query)
+    retrieval_k = adaptive["retrieval_k"]
+    final_k = top_k or adaptive["final_k"]
 
     # Stage 0: HyDE + Query expansion (parallel)
     hyde_embedding = None
@@ -446,6 +451,11 @@ async def search_async(
     if candidates:
         try:
             reranked = await rerank(query, candidates, top_n=rerank_k)
+
+            # Stage 4.5: Contextual compression — remove low-relevance noise
+            if settings.compression_enabled:
+                reranked = compress_results(reranked, min_results=min(3, final_k))
+
             # Stage 5: Authority weighting + floor (uses chunk_type from metadata)
             weighted = apply_authority_weighting(reranked)
             return weighted[:final_k]

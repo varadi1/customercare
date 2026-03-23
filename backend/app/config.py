@@ -33,6 +33,15 @@ class Settings(BaseSettings):
     search_top_k: int = 20  # initial retrieval per method (semantic + BM25)
     rerank_top_k: int = 5  # final results after reranking
 
+    # Contextual Compression (post-rerank noise filtering)
+    compression_enabled: bool = True
+    compression_score_floor: float = 0.01  # remove chunks with rerank_score below this
+    compression_gap_ratio: float = 0.35    # cut if score drops to <35% of previous
+    compression_min_results: int = 3       # always keep at least this many
+
+    # Adaptive k (dynamic retrieval depth by query complexity)
+    adaptive_k_enabled: bool = True
+
     # HyDE
     hyde_enabled: bool = True
     hyde_model: str = "gpt-4o-mini"
