@@ -35,17 +35,17 @@ class Settings(BaseSettings):
 
     # Contextual Compression (post-rerank noise filtering)
     compression_enabled: bool = True
-    compression_score_floor: float = 0.01  # remove chunks with rerank_score below this
-    compression_gap_ratio: float = 0.35    # cut if score drops to <35% of previous
-    compression_min_results: int = 3       # always keep at least this many
+    compression_score_floor: float = 0.005  # remove chunks with rerank_score below this
+    compression_gap_ratio: float = 0.08    # cut if score < 8% of TOP result (very conservative)
+    compression_min_results: int = 5       # always keep at least this many
 
     # Adaptive k (dynamic retrieval depth by query complexity)
     adaptive_k_enabled: bool = True
 
     # HyDE
-    hyde_enabled: bool = True
+    hyde_enabled: bool = False  # Disabled: domain-aware query expansion supersedes HyDE
     hyde_model: str = "gpt-4o-mini"
-    hyde_timeout: float = 3.0
+    hyde_timeout: float = 8.0
     hyde_max_tokens: int = 350
 
     answer_model: str = "gpt-4o-mini"

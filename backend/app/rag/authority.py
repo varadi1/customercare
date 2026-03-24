@@ -109,19 +109,40 @@ def _apply_authority_floor(results: list[dict]) -> None:
 
     EMAIL_TYPES = ("email_reply", "email_question", "email_qa", "lesson")
 
-    # 1. Priority floor: promote priority chunks into top 3
+    # 1. Email cap: max 2 email-type chunks in top 5
+    # Problem: with 9K+ email chunks, they dominate top positions even when
+    # official docs are more authoritative. Cap emails to leave room for
+    # multiple priority doc types (felhívás + gyik + segédlet).
+    email_count_top5 = sum(1 for r in results[:5] if r.get("chunk_type", "") in EMAIL_TYPES)
+    if email_count_top5 > 2 and len(results) > 5:
+        # Find non-email chunks below position 5 to promote
+        for i in range(5, len(results)):
+            ct = results[i].get("chunk_type", "")
+            if ct not in EMAIL_TYPES:
+                # Replace weakest email in top 5
+                for j in range(4, -1, -1):
+                    if results[j].get("chunk_type", "") in EMAIL_TYPES:
+                        results[j], results[i] = results[i], results[j]
+                        email_count_top5 -= 1
+                        break
+                if email_count_top5 <= 2:
+                    break
+
+    # 2. Priority floor: promote priority chunks into top 3
+    # Threshold lowered: if a priority chunk made it through retrieval + reranking,
+    # it's relevant enough to deserve a top position regardless of score.
     for i in range(3, len(results)):
         chunk_type = results[i].get("chunk_type", "")
         pre_score = results[i].get("pre_authority_score", 0)
 
-        if chunk_type in PRIORITY_CHUNK_TYPES and pre_score > 0.3:
+        if chunk_type in PRIORITY_CHUNK_TYPES and pre_score > 0.0:
             # Find the lowest-ranked non-priority item in top 3 to swap with
             for j in range(2, -1, -1):
                 if results[j].get("chunk_type", "") not in PRIORITY_CHUNK_TYPES:
                     results[j], results[i] = results[i], results[j]
                     break
 
-    # 2. Diversity guarantee: if top 5 are ALL email types, promote best non-email
+    # 3. Diversity guarantee: if top 5 are ALL email types, promote best non-email
     top5_types = [r.get("chunk_type", "") for r in results[:5]]
     if all(t in EMAIL_TYPES for t in top5_types):
         for i in range(5, len(results)):
@@ -131,22 +152,26 @@ def _apply_authority_floor(results: list[dict]) -> None:
                 results.insert(2, item)
                 break
 
-    # 3. Source-type diversity: ensure multiple priority types in top 5
-    # Only swap OUT email/lesson types — never displace felhívás or melléklet
+    # 4. Source-type diversity: maximize distinct priority types in top 5
+    # Keep promoting until we either run out of missing types or swappable email slots.
     PROTECTED_TYPES = {"felhívás", "palyazat_felhivas", "melléklet", "palyazat_melleklet"}
-    top5_priority_types = {
-        r.get("chunk_type", "") for r in results[:5]
-    } & PRIORITY_CHUNK_TYPES
 
-    if len(top5_priority_types) <= 1 and len(results) > 5:
+    for _round in range(3):  # max 3 promotion rounds
+        top5_priority_types = {
+            r.get("chunk_type", "") for r in results[:5]
+        } & PRIORITY_CHUNK_TYPES
+
+        promoted = False
         for i in range(5, len(results)):
             ct = results[i].get("chunk_type", "")
-            pre_score = results[i].get("pre_authority_score", 0)
-            if ct in PRIORITY_CHUNK_TYPES and ct not in top5_priority_types and pre_score > 0.15:
+            if ct in PRIORITY_CHUNK_TYPES and ct not in top5_priority_types:
                 # Replace the weakest email in top 5 (never displace protected types)
                 for j in range(4, -1, -1):
                     rj_type = results[j].get("chunk_type", "")
                     if rj_type in EMAIL_TYPES:
                         results[j], results[i] = results[i], results[j]
+                        promoted = True
                         break
                 break
+        if not promoted:
+            break

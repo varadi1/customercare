@@ -8,11 +8,16 @@ This is especially important for the OETP corpus where ~9K email chunks
 compete with ~550 official doc chunks. Even after reranking, low-relevance
 emails can occupy slots that would be better used by official docs ranked
 lower but genuinely relevant.
+
+IMPORTANT: Priority chunk types (felhívás, gyik, segédlet, etc.) are NEVER
+removed by compression — they are protected. Only email-type chunks with
+low rerank scores get compressed out.
 """
 
 from __future__ import annotations
 
 from ..config import settings
+from .authority import PRIORITY_CHUNK_TYPES
 
 
 def compress_results(
@@ -27,13 +32,13 @@ def compress_results(
         results: Reranked results (must have 'rerank_score').
         min_results: Always keep at least this many results (default from config).
         score_floor: Remove results below this rerank_score (default from config).
-        gap_ratio: If score drops by this ratio from the previous result, cut there.
-                   E.g., 0.5 means "if score drops to less than 50% of the previous".
+        gap_ratio: If score drops by this ratio vs the TOP result, cut there.
+                   E.g., 0.15 means "if score < 15% of the best result".
 
     Returns:
         Filtered results list (preserves order).
     """
-    if not results or len(results) <= 1:
+    if not results or len(results) <= 2:
         return results
 
     min_results = min_results if min_results is not None else settings.compression_min_results
@@ -44,44 +49,43 @@ def compress_results(
     if not any(r.get("rerank_score") for r in results):
         return results
 
-    # Strategy 1: Score floor — remove clearly irrelevant chunks
-    above_floor = []
-    below_floor = []
-    for r in results:
+    top_score = results[0].get("rerank_score", 0)
+    if top_score <= 0:
+        return results
+
+    compressed = []
+    removed_scores = []
+
+    for i, r in enumerate(results):
         rs = r.get("rerank_score", 0)
-        if rs >= score_floor:
-            above_floor.append(r)
-        else:
-            below_floor.append(r)
+        ct = r.get("chunk_type", "")
 
-    # Strategy 2: Elbow detection — find the steepest relative score drop
-    elbow_cut = len(above_floor)
-    if len(above_floor) > min_results:
-        for i in range(1, len(above_floor)):
-            prev_score = above_floor[i - 1].get("rerank_score", 0)
-            curr_score = above_floor[i].get("rerank_score", 0)
+        # Priority chunks are NEVER compressed out
+        if ct in PRIORITY_CHUNK_TYPES:
+            compressed.append(r)
+            continue
 
-            if prev_score > 0 and curr_score / prev_score < gap_ratio:
-                elbow_cut = max(i, min_results)
-                break
+        # Always keep at least min_results
+        if len(compressed) < min_results:
+            compressed.append(r)
+            continue
 
-    compressed = above_floor[:elbow_cut]
+        # Strategy 1: Hard score floor
+        if rs < score_floor:
+            removed_scores.append(round(rs, 4))
+            continue
 
-    # Guarantee: always return at least min_results
-    if len(compressed) < min_results:
-        # Backfill from below_floor (still ordered by rerank score)
-        needed = min_results - len(compressed)
-        compressed.extend(below_floor[:needed])
+        # Strategy 2: Ratio vs top score — only remove if dramatically worse
+        if rs / top_score < gap_ratio:
+            removed_scores.append(round(rs, 4))
+            continue
 
-    if len(compressed) < len(results):
-        removed = len(results) - len(compressed)
-        scores_removed = [
-            round(r.get("rerank_score", 0), 4)
-            for r in results[len(compressed):]
-        ]
+        compressed.append(r)
+
+    if removed_scores:
         print(
-            f"[hanna-oetp] Compression: {removed} chunks removed "
-            f"(scores: {scores_removed[:5]}), {len(compressed)} kept"
+            f"[hanna-oetp] Compression: {len(removed_scores)} chunks removed "
+            f"(scores: {removed_scores[:5]}), {len(compressed)} kept"
         )
 
     return compressed

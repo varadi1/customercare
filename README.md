@@ -62,9 +62,11 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   │   │   ├── embeddings.py       # BGE-M3 embedding (lokális, OpenAI fallback)
 │   │   │   ├── contextual.py       # Contextual enrichment: doc_type-alapú prefix az embedding elé
 │   │   │   ├── hyde.py             # HyDE: hipotetikus dokumentum generálás → embedding
-│   │   │   ├── query_expansion.py  # Query expansion: gpt-4o-mini → 2-3 keresési variáns
+│   │   │   ├── query_expansion.py  # Domain-aware expansion: OETP szinonima szótár, 4-5 variáns
+│   │   │   ├── compression.py     # Post-rerank contextual compression (noise filtering)
+│   │   │   ├── adaptive_k.py      # Query complexity → dynamic retrieval depth
 │   │   │   ├── reranker.py         # Reranking: lokális BGE v2-m3 (:8102) + Cohere fallback
-│   │   │   ├── authority.py        # Authority weighting: forrástípus-alapú pontozás
+│   │   │   ├── authority.py        # Authority weighting + floor + email cap + diversity loop
 │   │   │   ├── confidence.py       # Multi-faktor confidence számítás (high/medium/low)
 │   │   │   ├── references.py       # Cross-reference resolution (Felhívás 4.2 pont → chunk)
 │   │   │   ├── bm25.py             # Legacy BM25 index (ChromaDB-ből maradt, PostgreSQL tsvector váltotta)
@@ -99,7 +101,10 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   ├── daily_ingest.sh             # Napi OETP email ingest (cron)
 │   ├── obsidian_sync.sh            # Napi Obsidian vault szinkronizáció (cron)
 │   ├── verify_ingest.py            # Egységes verifikáció (3 gyűjtemény)
+│   ├── monitor_nffku.py            # Heti nffku.hu OETP oldal monitoring (LaunchAgent: hétfő 06:15)
 │   └── migrate_bge_m3.py           # BGE-M3 migráció tool
+├── backend/scripts/
+│   └── rechunk_gyik.py             # GYIK PDF re-chunkolás kérdésenként (28 Q&A pár)
 ├── data/
 │   ├── documents/                  # OETP PDF dokumentumok
 │   ├── response_templates.json     # Válasz sablonok
@@ -128,14 +133,17 @@ A felhasználó rövid, pontatlan kérdéséből (pl. "mikor kapom a pénzt?") e
 - 3 másodperces timeout — ha nem sikerül, visszaesik raw query embeddingre
 - Parallel fut a Query Expansion-nel (Stage 0)
 
-### 2. Query Expansion
+### 2. Domain-Aware Query Expansion (Multi-Query Rewriting)
 
 **Fájl:** `rag/query_expansion.py`
 
-A felhasználói kérdést 2-3 alternatív keresési kifejezésre bontja ki gpt-4o-mini-vel. Szakkifejezéseket generál (pl. "kifizetés" → "folyósítás", "támogatás utalása") a recall növeléséhez.
+A felhasználói kérdést **4-5 alternatív keresési kifejezésre** bontja ki gpt-4o-mini-vel, beépített OETP szinonima szótárral. A cél: a colloquial ügyfélnyelv és a hivatalos dokumentum-terminológia közötti gap bridgelése.
 
-- Magyar nyelven, OETP-specifikus kontextussal
+- **OETP szinonima szótár**: villanyóra↔fogyasztásmérő, törölni↔elállás, POD↔csatlakozási pont, stb.
+- **Struktúra**: eredeti + formális + GYIK-stílusú + 2× alternatív szakkifejezés
+- Temperature: 0.2 (reprodukálható variánsok)
 - Visszaesik az eredeti queryre, ha az LLM nem elérhető
+- HyDE (Hypothetical Document Embeddings) kikapcsolva — a domain-aware expansion szuperszeálja
 
 ### 3. Hybrid Retrieval (Semantic + BM25)
 
@@ -157,12 +165,19 @@ Minden expanded queryhez párhuzamosan fut:
 
 Az összes keresési csatorna eredményeit (semantic + BM25 + KG + priority) egyetlen rangsorba fésüli. Képlet: `score = Σ(1 / (k + rank_i))`. Deduplikáció chunk ID alapján.
 
-### 5. Diversity Cap + Priority Injection
+### 5. Diversity Cap + Priority Injection + Email Dedup
 
-**Fájl:** `rag/search.py` → `_cap_per_source()`, `_inject_priority_chunks()`
+**Fájl:** `rag/search.py` → `_cap_per_source()`, `_inject_priority_chunks()`, `_get_email_group_key()`
 
-- **Per-source cap**: Maximum 2 chunk forrásadokumentumonként → egyetlen email thread nem monopolizálhatja a találatokat
+- **Per-source cap**: Maximum 2 chunk forrásadokumentumonként
+- **Email group cap**: Azonos email subfolder / mailbox max 2 chunk (a `sent:`, `email_reply:`, `subfolder:` prefixek csoportosítva)
 - **Priority injection**: Ha egy prioritásos dokumentumtípus (pl. gyik) releváns volt a fused listában de nem jutott be a top-N candidates-be, lecseréli a leggyengébb email chunkot
+
+### 5.5. Contextual Compression
+
+**Fájl:** `rag/compression.py`
+
+Post-rerank szűrés: eltávolítja a nagyon alacsony rerank_score-ú chunkokat, de **priority chunk típusokat soha nem szűr ki**. Score floor (0.005) + ratio vs top score (8%).
 
 ### 6. Reranking
 
@@ -193,9 +208,19 @@ Forrástípus-alapú súlyozás — a hivatalos dokumentumok mindig előnyt élv
 **Képlet:** `final_score = base_score × (1 - 0.55) + base_score × authority × 0.55`
 
 **Authority floor garantálja:**
-1. Prioritásos chunk típusok decent score-ral bekerülnek a top 3-ba
-2. Ha a top 5 mind email → a legjobb nem-email felkerül a 2. pozícióba
-3. Forrás-típus diverzitás: legalább 2 különböző prioritásos típus a top 5-ben
+1. **Email cap**: max 2 email-típusú chunk a top 5-ben (email_reply, email_question, lesson)
+2. **Priority floor**: prioritásos chunkokat promótálja a top 3-ba (threshold: 0.0 — ha a pipeline-on végigment, promótáljuk)
+3. Ha a top 5 mind email → a legjobb nem-email felkerül a 2. pozícióba
+4. **Diversity loop**: max 3 kör promóció — minden missing priority type-ot beemel a top 5-be (email slot-okat cserélve)
+
+### 7.5. Adaptive k
+
+**Fájl:** `rag/adaptive_k.py`
+
+Query complexity classification → dynamic retrieval depth:
+- **Simple** (k=5, retrieval=20): "Mi az OETP?", "Mennyi a támogatás?"
+- **Medium** (k=7, retrieval=25): 2 koncepció, 10+ szó
+- **Complex** (k=10, retrieval=30): multi-step, összehasonlítás, 3+ entitás
 
 ---
 

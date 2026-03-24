@@ -53,8 +53,11 @@ async def generate_hypothetical_document_async(query: str) -> str | None:
             if len(hypo_doc) < 30:
                 return None
             return hypo_doc
+    except httpx.TimeoutException:
+        print(f"[hanna-oetp] HyDE generation timed out ({settings.hyde_timeout}s)")
+        return None
     except Exception as e:
-        print(f"[hanna-oetp] HyDE generation failed: {e}")
+        print(f"[hanna-oetp] HyDE generation failed: {type(e).__name__}: {e}")
         return None
 
 

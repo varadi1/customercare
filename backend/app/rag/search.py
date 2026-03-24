@@ -447,7 +447,7 @@ async def search_async(
     # Stage 4: Rerank with the ORIGINAL query (not expanded)
     # Request more results from reranker than final_k so authority floor
     # has room to promote priority chunks that the reranker scored lower.
-    rerank_k = min(final_k + 5, len(candidates))
+    rerank_k = min(final_k + 8, len(candidates))
     if candidates:
         try:
             reranked = await rerank(query, candidates, top_n=rerank_k)
@@ -513,21 +513,66 @@ def get_collection_stats() -> dict:
     return loop.run_until_complete(_get_collection_stats_async())
 
 
+def _get_email_group_key(source: str) -> str | None:
+    """Extract email group key for cap-per-group dedup.
+
+    Groups:
+    - subfolder:mailbox:FolderName:messageId → subfolder:mailbox:FolderName
+    - sent:mailbox:conversationId → sent:mailbox (all sent from same mailbox = 1 group)
+    - email_reply:mailbox:messageId → email_reply:mailbox (all replies from same mailbox)
+
+    Returns None for non-email sources.
+    """
+    if source.startswith("subfolder:"):
+        parts = source.rsplit(":", 1)
+        if len(parts) == 2 and len(parts[1]) >= 8:
+            return parts[0]
+    elif source.startswith("sent:"):
+        # sent:mailbox:convId → sent:mailbox
+        parts = source.split(":")
+        if len(parts) >= 2:
+            return f"sent:{parts[1]}"
+    elif source.startswith("email_reply:"):
+        # email_reply:mailbox:msgId → email_reply:mailbox
+        parts = source.split(":")
+        if len(parts) >= 2:
+            return f"email_reply:{parts[1]}"
+    return None
+
+
 def _cap_per_source(results: list[dict], max_per_source: int = 3, total: int = 20) -> list[dict]:
     """Limit results to max_per_source chunks per source document.
 
-    Preserves ranking order. Prevents any single document (e.g. one email thread)
-    from monopolizing all candidate slots before reranking.
+    Additionally applies a subfolder cap: if >3 chunks come from the same
+    email subfolder (e.g. "Villanyóra más nevén van"), cap that subfolder
+    to max_per_source. This prevents a single email topic from monopolizing
+    all candidate slots while allowing normal source diversity.
+
+    Preserves ranking order.
     """
-    counts: dict[str, int] = {}
+    source_counts: dict[str, int] = {}
+    subfolder_counts: dict[str, int] = {}
     capped = []
+
     for doc in results:
         source = doc.get("source", doc.get("id", ""))
-        counts[source] = counts.get(source, 0) + 1
-        if counts[source] <= max_per_source:
-            capped.append(doc)
-            if len(capped) >= total:
-                break
+
+        # Per-source cap (original behavior)
+        source_counts[source] = source_counts.get(source, 0) + 1
+        if source_counts[source] > max_per_source:
+            continue
+
+        # Per-email-group cap: limit same-topic/same-mailbox email floods
+        sf_key = _get_email_group_key(source)
+        if sf_key:
+            subfolder_counts[sf_key] = subfolder_counts.get(sf_key, 0) + 1
+            if subfolder_counts[sf_key] > max_per_source:
+                continue
+
+        capped.append(doc)
+        if len(capped) >= total:
+            break
+
     return capped
 
 
