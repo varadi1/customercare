@@ -723,10 +723,8 @@ Tárgy: {req.email_subject}
     except Exception:
         pass
 
-    # 4. LLM generation — reformulate facts into coherent email
-    from openai import OpenAI
-    model = req.model or "gpt-4o-mini"
-    client = OpenAI(api_key=settings.openai_api_key)
+    # 4. LLM generation — multi-provider with automatic fallback
+    from .llm_client import chat_completion
 
     try:
         messages = [
@@ -734,14 +732,15 @@ Tárgy: {req.email_subject}
             *DRAFT_GENERATE_FEWSHOT,
             {"role": "user", "content": user_msg},
         ]
-        resp = client.chat.completions.create(
-            model=model,
+        llm_result = await chat_completion(
             messages=messages,
             temperature=0.15,
             max_tokens=1000,
-            response_format={"type": "json_object"},
+            json_mode=True,
         )
-        raw = resp.choices[0].message.content
+        raw = llm_result["content"]
+        llm_provider = llm_result["provider"]
+        llm_model = llm_result["model"]
         draft_data = json.loads(raw)
     except Exception as e:
         # LLM failed — return raw facts as fallback
@@ -781,7 +780,8 @@ Tárgy: {req.email_subject}
         "confidence": confidence,
         "sources": fact_sources,
         "method": "verbatim+llm" if any(f["verified"] for f in verified_facts) else "chunks+llm",
-        "model_used": model,
+        "model_used": llm_model,
+        "llm_provider": llm_provider,
         "facts_count": len(verified_facts),
         "nli_verification": nli_result,
         "suggested_confidence": ctx.get("suggested_confidence"),
