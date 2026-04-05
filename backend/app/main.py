@@ -332,6 +332,21 @@ async def invalidate_chunks_endpoint(req: InvalidateRequest):
 
 # ─── Email: Polling ───────────────────────────────────────────────────────────
 
+@app.post("/emails/process")
+async def process_emails(hours: float = 4):
+    """Autonomous email processing — poll + filter + draft + save.
+
+    Replaces OpenClaw agent orchestration. No debug blocks in drafts.
+    Feature flag: AUTO_PROCESS_ENABLED (default: false).
+    """
+    from .email.processor import process_new_emails
+    try:
+        result = await process_new_emails(hours=hours)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/emails/poll", response_model=BatchPollResult)
 async def poll_emails(hours: float | None = None):
     """Poll all shared mailboxes for new emails.

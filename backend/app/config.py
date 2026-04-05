@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     answer_max_tokens: int = 1500
     answer_temperature: float = 0.1
 
+    # Discord webhook (optional — for processing notifications)
+    discord_webhook_url: str = ""    # .env: DISCORD_WEBHOOK_URL
+
+    # Autonomous processing
+    auto_process_enabled: bool = False  # Feature flag for autonomous email processing
+
     # OETP MySQL database (readonly)
     oetp_db_host: str = "185.187.73.44"
     oetp_db_port: int = 3307
