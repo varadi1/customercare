@@ -85,6 +85,15 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   │   │   ├── attachments.py      # Csatolmány kezelés + GPT-4o Vision elemzés
 │   │   │   ├── auth.py             # MS Graph API auth
 │   │   │   └── draft_store.py      # Draft tárolás
+│   │   ├── reasoning/
+│   │   │   ├── traces.py             # Reasoning memory: query→response→outcome traces (pgvector)
+│   │   │   ├── person_tracker.py     # Person + Organization + Application entity tracking
+│   │   │   ├── knowledge_gaps.py     # Heti knowledge gap detection + Obsidian riport
+│   │   │   ├── authority_learner.py  # Dynamic authority weight learning from traces
+│   │   │   ├── policy_tracker.py     # Chunk supersession + validity check
+│   │   │   ├── style_score.py        # 5-component style similarity scoring
+│   │   │   ├── radix_client.py       # OETP MySQL direct query (pályázó adatok)
+│   │   │   └── reference_checker.py  # Section reference + program name validation
 │   │   └── obsidian/
 │   │       ├── pg_ingest.py        # Obsidian vault → PostgreSQL szinkronizáció
 │   │       ├── pg_search.py        # Obsidian hybrid keresés
@@ -94,7 +103,17 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   │       ├── enrichment.py       # Obsidian kontextuális gazdagítás
 │   │       ├── pg_schema.sql       # Obsidian DB séma
 │   │       └── search.py           # Legacy keresés
-│   ├── scripts/                    # Migrációs és karbantartó scriptek
+│   ├── tests/
+│   │   ├── conftest.py               # Async DB fixtures (transaction rollback)
+│   │   ├── test_reasoning_traces.py   # 26 integration tests (traces, person, entity relations)
+│   │   ├── test_knowledge_gaps.py     # 5 tests (gap detection, recommendations)
+│   │   └── test_phase4.py             # 9 tests (policy tracker, dynamic authority)
+│   ├── scripts/
+│   │   ├── eval_100_emails.py          # 100-email eval (semantic + style scoring)
+│   │   ├── eval_golden_set.py          # Golden set evaluation (10 Q&A pairs)
+│   │   ├── migrate_reasoning.py        # reasoning_traces tábla + indexek létrehozása
+│   │   └── weekly_gap_report.py        # Heti knowledge gap riport (LaunchAgent)
+│   ├── scripts/                    # Migrációs és karbantartó scriptek (legacy)
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── scripts/
@@ -446,11 +465,50 @@ obsidian_chunks (
 9. **NLI verification** → faithfulness ellenőrzés
 10. **Confidence jelzés** → 🟢 high / 🟡 medium / 🔴 low ikon a draft-ban
 
-### Feedback Loop
+### Feedback Loop + Reasoning Memory
 
-**Fájl:** `email/feedback.py`
+**Fájl:** `email/feedback.py`, `reasoning/traces.py`
 
-A `/emails/feedback/check` endpoint összehasonlítja a Hanna által generált draft-ot a ténylegesen elküldött válasszal. A különbségek a `feedback_diffs.json`-be kerülnek, és a következő draft generálásnál figyelembe veszi őket.
+A `/emails/feedback/check` endpoint összehasonlítja a Hanna által generált draft-ot a ténylegesen elküldött válasszal:
+
+- **SENT_AS_IS** (sim ≥ 0.85): kolléga módosítás nélkül küldte ki
+- **SENT_MODIFIED** (sim 0.30-0.85): kolléga módosította
+- **REJECTED** (sim < 0.30): kolléga teljesen átírta
+
+Az eredmények a `reasoning_traces` PostgreSQL táblába kerülnek (pgvector embedding-gel), és a következő hasonló kérdésnél a `draft_context.py` visszakeresi a korábbi sikeres válaszokat.
+
+### OETP Pályázati Adatbázis Integráció
+
+**Fájl:** `reasoning/radix_client.py`
+
+Közvetlen MySQL readonly hozzáférés az OETP pályázati rendszerhez. Ha az email OETP-ID-t tartalmaz, Hanna lekérdezi:
+- Pályázó neve, státusz (14 állapot)
+- Célterület, igényelt/jóváhagyott támogatás
+- Meghatalmazott, kivitelező, POD szám
+
+Konfiguráció `.env`-ből: `OETP_DB_PASSWORD`, `OETP_DB_ENABLED=true`
+
+### Person + Organization Entity Tracking
+
+**Fájl:** `reasoning/person_tracker.py`
+
+Minden bejövő email feladóját `kg_entities`-be menti (`type='person'`), az email domain-ből szervezetet hoz létre, és az OETP-ID-hez pályázati entity-t. Relációk: `ASKED_ABOUT`, `BELONGS_TO`.
+
+### Reference Validation
+
+**Fájl:** `reasoning/reference_checker.py`
+
+Post-generation ellenőrzés:
+- Hivatkozott pontszámok (pl. "3.3. pont") léteznek-e a forrás chunkokban
+- Program név validáció ("Otthonfelújítási" → confidence downgrade)
+
+### Evaluation
+
+| Eval típus | Script | Eredmény |
+|---|---|---|
+| 71 valós email | `eval_100_emails.py` | 72% MATCH, 0% MISMATCH, sem avg 0.76 |
+| 10 golden set kérdés | `eval_golden_set.py` | 78% PASS, 0% FAIL |
+| Stílus score | beépített | 0.846 avg (greeting 0.80, closing 0.97) |
 
 ---
 
@@ -506,7 +564,8 @@ Futtatás: `python3 scripts/verify_ingest.py --fix --report`
 | NLI Verification | Lokális szolgáltatás, :8107 |
 | VerbatimRAG | Lokális szolgáltatás, :8108 |
 | Email | Microsoft Graph API (Outlook 365, Azure AD) |
-| Knowledge Graph | PostgreSQL táblák (entities + relations + entity-chunks) |
+| Knowledge Graph | PostgreSQL táblák (entities + relations + entity-chunks + reasoning_traces) |
+| OETP Pályázati DB | MySQL readonly (tarolo_neuzrt_hu_db, :3307) |
 | Csatolmány elemzés | GPT-4o Vision |
 | Chunking | tiktoken (cl100k_base), 500 token / 100 overlap |
 | Hosting | Docker Compose, Mac Studio M3 Ultra |
@@ -554,7 +613,7 @@ docker compose up -d
 | `/emails/draft` | POST | Válasz-tervezet mentése Outlook-ba |
 | `/emails/drafts/{mailbox}` | GET | Drafts listázása |
 | `/emails/mark-sent/{mailbox}` | POST | "Hanna - elküldve" kategória |
-| `/emails/feedback/check` | POST | Draft vs. elküldött összehasonlítás |
+| `/emails/feedback/check` | POST | Draft vs. elküldött összehasonlítás + reasoning trace sync |
 | `/emails/history/ingest` | POST | Historikus email ingestálás |
 | `/emails/{mailbox}/messages/{id}/attachments` | GET | Csatolmányok listázása |
 | `/emails/{mailbox}/messages/{id}/analyze-images` | POST | Csatolmány képelemzés (GPT-4o Vision) |
@@ -564,7 +623,9 @@ docker compose up -d
 | Endpoint | Metódus | Leírás |
 |----------|---------|--------|
 | `/draft/context` | POST | RAG + stílus + template + feedback egy hívásban |
-| `/draft/generate` | POST | Grounded email draft generálás (VerbatimRAG + NLI) |
+| `/draft/generate` | POST | Grounded email draft generálás (VerbatimRAG + NLI + OETP DB + ref check) |
+| `/reasoning/gaps` | GET | Knowledge gap report (days param) |
+| `/reasoning/refresh-authority` | POST | Dynamic authority weight újraszámítás |
 
 ### Stílus
 
@@ -646,4 +707,4 @@ Az OETP ügyfélszolgálati kérdések ~60-70%-a egyszerű ténykérdés, ezért
 
 ---
 
-*Készítette: Bob — 2026-02-12 | Frissítve: 2026-03-19*
+*Készítette: Bob — 2026-02-12 | Frissítve: 2026-04-05 (reasoning memory, OETP DB, eval framework)*
