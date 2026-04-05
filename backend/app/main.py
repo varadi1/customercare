@@ -338,6 +338,13 @@ async def invalidate_chunks_endpoint(req: InvalidateRequest):
 
 # ─── Email: Polling ───────────────────────────────────────────────────────────
 
+@app.get("/scheduler/status")
+async def scheduler_status():
+    """Return scheduler status: last run time, result, errors."""
+    from .scheduler import get_scheduler_status
+    return get_scheduler_status()
+
+
 @app.get("/llm/health")
 async def llm_health():
     """Test all LLM providers and return status.
@@ -790,6 +797,8 @@ Tárgy: {req.email_subject}
         "llm_provider": llm_provider,
         "facts_count": len(verified_facts),
         "nli_verification": nli_result,
+        "reference_check": ref_check,
+        "radix_data": ctx.get("radix_data") or None,
         "suggested_confidence": ctx.get("suggested_confidence"),
         "similar_traces": ctx.get("similar_traces", []),
         "trace_id": trace_id,

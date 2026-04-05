@@ -20,6 +20,16 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 _task: asyncio.Task | None = None
+_last_run: dict = {"time": None, "status": None, "stats": None, "error": None}
+
+
+def get_scheduler_status() -> dict:
+    """Return scheduler status for health check."""
+    return {
+        "enabled": settings.auto_process_enabled,
+        "running": _task is not None and not _task.done(),
+        "last_run": _last_run,
+    }
 
 
 def start_scheduler():
@@ -55,11 +65,21 @@ async def _scheduler_loop():
 
         try:
             # Every iteration: process emails (2h polling window)
-            await _run_email_processing()
+            stats = await _run_email_processing()
+            _last_run["time"] = now.isoformat()
+            _last_run["status"] = "ok"
+            _last_run["stats"] = stats
+
+            # Discord notification after each run
+            await _notify_discord_run(stats)
 
             # At 05:00 UTC: feedback check
             if hour == 5:
                 await _run_feedback_check()
+
+            # At 06:00 UTC: style patterns refresh
+            if hour == 6:
+                await _run_style_refresh()
 
             # Monday 06:00 UTC: weekly report + authority refresh
             if weekday == 0 and hour == 6:
@@ -67,25 +87,28 @@ async def _scheduler_loop():
 
         except Exception as e:
             logger.error("Scheduler error: %s", e)
+            _last_run["time"] = now.isoformat()
+            _last_run["status"] = "error"
+            _last_run["error"] = str(e)
+            await _notify_discord_error(str(e))
 
         # Sleep 2 hours
         await asyncio.sleep(7200)
 
 
-async def _run_email_processing():
+async def _run_email_processing() -> dict:
     """Process new emails — poll + filter + draft."""
     logger.info("Scheduler: starting email processing...")
-    try:
-        from .email.processor import process_new_emails
-        stats = await process_new_emails(hours=4)
-        logger.info(
-            "Scheduler: processed %d emails, %d drafts, %d skipped",
-            stats.get("emails_polled", 0),
-            stats.get("drafts_created", 0),
-            stats.get("skipped", 0),
-        )
-    except Exception as e:
-        logger.error("Scheduler: email processing failed: %s", e)
+    from .email.processor import process_new_emails
+    stats = await process_new_emails(hours=4)
+    logger.info(
+        "Scheduler: processed %d emails, %d drafts, %d skipped, %d errors",
+        stats.get("emails_polled", 0),
+        stats.get("drafts_created", 0),
+        stats.get("skipped", 0),
+        stats.get("errors", 0),
+    )
+    return stats
 
 
 async def _run_feedback_check():
@@ -99,6 +122,64 @@ async def _run_feedback_check():
             logger.info("Scheduler: feedback for %s: %s", mb, result.get("status"))
     except Exception as e:
         logger.error("Scheduler: feedback check failed: %s", e)
+
+
+async def _run_style_refresh():
+    """Daily style patterns refresh from colleague sent emails."""
+    logger.info("Scheduler: refreshing style patterns...")
+    try:
+        from .email.style_learner import analyze_sent_items
+        mailboxes = [m.strip() for m in settings.shared_mailboxes.split(",") if m.strip()]
+        for mb in mailboxes:
+            result = await analyze_sent_items(mailbox=mb, hours=168)  # 1 week
+            logger.info("Scheduler: style refresh for %s: %d emails analyzed",
+                       mb, result.get("total_analyzed", 0))
+    except Exception as e:
+        logger.error("Scheduler: style refresh failed: %s", e)
+
+
+async def _notify_discord_run(stats: dict) -> None:
+    """Send run summary to Discord (only if drafts created or errors)."""
+    if not settings.discord_webhook_url:
+        return
+
+    drafts = stats.get("drafts_created", 0)
+    errors = stats.get("errors", 0)
+    polled = stats.get("emails_polled", 0)
+
+    # Only notify if something happened
+    if drafts == 0 and errors == 0 and polled == 0:
+        return
+
+    msg = (
+        f"📋 **Hanna** | "
+        f"📬 {polled} email | "
+        f"✅ {drafts} draft | "
+        f"🟢 {stats.get('high_confidence', 0)} "
+        f"🟡 {stats.get('medium_confidence', 0)} "
+        f"🔴 {stats.get('low_confidence', 0)} | "
+        f"⏭️ {stats.get('skipped', 0)} skip"
+    )
+    if errors > 0:
+        msg += f" | ❌ **{errors} ERROR**"
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(settings.discord_webhook_url, json={"content": msg})
+    except Exception as e:
+        logger.debug("Discord notify failed: %s", e)
+
+
+async def _notify_discord_error(error: str) -> None:
+    """Send error alert to Discord."""
+    if not settings.discord_webhook_url:
+        return
+    msg = f"🚨 **Hanna HIBA** | Scheduler error: {error[:200]}"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(settings.discord_webhook_url, json={"content": msg})
+    except Exception:
+        pass
 
 
 async def _run_weekly_report():
