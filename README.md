@@ -584,7 +584,20 @@ Hanna **teljesen önálló rendszer** — nem függ az OpenClaw agenttől. Beép
 |----------|---------|
 | Minden 2 óra | Email poll + filter + draft generálás |
 | Naponta 05:00 | Feedback check (draft vs elküldött összehasonlítás) |
+| Naponta 06:00 | Style patterns frissítés (kolléga válaszokból) |
 | Hetente (H 06:00) | Knowledge gap riport + authority weight frissítés |
+
+### Discord Notifikáció
+
+A scheduler minden futás után üzenetet küld a `📞-hanna-oetp` Discord csatornára:
+- Normál futás: `📋 Hanna | 📬 N email | ✅ N draft | 🟢 🟡 🔴 | ⏭️ skip`
+- Hiba: `🚨 Hanna HIBA | scheduler error: ...`
+
+Config: `DISCORD_BOT_TOKEN` + `DISCORD_CHANNEL_ID` (.env)
+
+### Jogszabály RAG Integráció
+
+Jogi kérdések automatikus felismerése (`needs_legal_context`) + Jogszabály RAG (:8103) lekérdezés. A releváns jogszabályi háttér (pl. de minimis EU rendelet) bekerül az LLM kontextusba.
 
 ### Multi-Provider LLM (automatic fallback)
 
@@ -655,6 +668,7 @@ docker compose up -d
 | `/reasoning/gaps` | GET | Knowledge gap report (days param) |
 | `/reasoning/refresh-authority` | POST | Dynamic authority weight újraszámítás |
 | `/llm/health` | GET | Mind 3 LLM provider tesztelése (503 ha mind leáll) |
+| `/scheduler/status` | GET | Scheduler állapot: utolsó futás ideje, eredmény, hibák |
 
 ### Stílus
 
@@ -739,4 +753,4 @@ A `GET /llm/health` endpoint teszteli mind a 3 providert és 503-at ad ha **egyi
 
 ---
 
-*Készítette: Bob — 2026-02-12 | Frissítve: 2026-04-05 (önálló működés, multi-provider LLM, gpt-5.4-mini, reasoning memory, OETP DB)*
+*Készítette: Bob — 2026-02-12 | Frissítve: 2026-04-06 (Discord bot, Jogszabály RAG, scheduler monitoring, 11 teszt)*
