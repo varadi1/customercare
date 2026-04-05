@@ -56,8 +56,14 @@ async def lifespan(app: FastAPI):
     # Initialize reranker (local service with Cohere fallback)
     reranker_mode = await reranker.initialize()
     print(f"[hanna] Reranker initialized: {reranker_mode}")
-    
+
+    # Start autonomous scheduler (if enabled)
+    from .scheduler import start_scheduler, stop_scheduler
+    start_scheduler()
+
     yield
+
+    stop_scheduler()
 
 
 app = FastAPI(
@@ -1363,29 +1369,25 @@ async def obsidian_answer_endpoint(req: ObsidianAnswerRequest):
     context_block = "\n\n".join(context_parts)
     user_msg = f"Kérdés: {req.query}\n\n{context_block}"
 
-    # 4. (#12) Cascade routing + LLM call
-    from openai import OpenAI
+    # 4. (#12) Cascade routing + multi-provider LLM call
+    from .llm_client import chat_completion
     query_type = _classify_query_complexity(req.query)
-    if req.model:
-        model = req.model
-    else:
-        model = _select_model(query_type, top_score, settings.answer_model)
-    client = OpenAI(api_key=settings.openai_api_key)
     try:
         messages = [
             {"role": "system", "content": OBSIDIAN_ANSWER_SYSTEM_PROMPT},
             *OBSIDIAN_ANSWER_FEWSHOT,
             {"role": "user", "content": user_msg},
         ]
-        resp = client.chat.completions.create(
-            model=model, messages=messages, temperature=settings.answer_temperature,
-            max_tokens=settings.answer_max_tokens, response_format={"type": "json_object"},
+        llm_result = await chat_completion(
+            messages=messages, temperature=settings.answer_temperature,
+            max_tokens=settings.answer_max_tokens, json_mode=True,
         )
-        raw = resp.choices[0].message.content
+        raw = llm_result["content"]
+        model = llm_result["model"]
         answer_data = json.loads(raw)
     except Exception as e:
         return {"answer": None, "error": f"LLM generation failed: {e}", "sources": [], "confidence": "error",
-                "model_used": model, "top_score": round(top_score, 4), "relevance_sufficient": True, "chunks_used": len(gen_results)}
+                "model_used": None, "top_score": round(top_score, 4), "relevance_sufficient": True, "chunks_used": len(gen_results)}
 
     # 5. Quote verification
     chunk_texts = " ".join(r.get("content", r.get("text", "")) for r in gen_results)
@@ -2083,7 +2085,7 @@ async def answer_endpoint(req: HannaAnswerRequest):
     user_msg = f"Kérdés: {req.query}\n\n{context_block}"
 
     # 5. (#12) Cascade routing + (#10) VerbatimRAG for simple fact questions
-    from openai import OpenAI
+    from .llm_client import chat_completion
     query_type = _classify_query_complexity(req.query)
 
     # Try extractive answer first for simple queries with high confidence
@@ -2124,25 +2126,20 @@ async def answer_endpoint(req: HannaAnswerRequest):
         except Exception:
             pass  # VerbatimRAG unavailable — fall through to generative
 
-    if req.model:
-        model = req.model
-    else:
-        model = _select_model(query_type, top_score, settings.answer_model)
-    client = OpenAI(api_key=settings.openai_api_key)
     try:
         messages = [
             {"role": "system", "content": HANNA_ANSWER_SYSTEM_PROMPT},
             *HANNA_ANSWER_FEWSHOT,
             {"role": "user", "content": user_msg},
         ]
-        resp = client.chat.completions.create(
-            model=model,
+        llm_result = await chat_completion(
             messages=messages,
             temperature=settings.answer_temperature,
             max_tokens=settings.answer_max_tokens,
-            response_format={"type": "json_object"},
+            json_mode=True,
         )
-        raw = resp.choices[0].message.content
+        raw = llm_result["content"]
+        model = llm_result["model"]
         answer_data = json.loads(raw)
     except Exception as e:
         return {

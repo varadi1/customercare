@@ -103,16 +103,14 @@ def expand_query(query: str) -> list[str]:
 
 
 async def expand_query_async(query: str) -> list[str]:
-    """Async version of domain-aware query expansion."""
+    """Async version of domain-aware query expansion (multi-provider)."""
     if len(query.split()) > 20:
         return [query]
 
     try:
-        from openai import AsyncOpenAI
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        from ..llm_client import chat_completion
 
-        response = await client.chat.completions.create(
-            model=EXPANSION_MODEL,
+        llm_result = await chat_completion(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": query},
@@ -121,7 +119,7 @@ async def expand_query_async(query: str) -> list[str]:
             max_tokens=350,
         )
 
-        content = response.choices[0].message.content.strip()
+        content = llm_result["content"].strip()
         queries = json.loads(content)
 
         if isinstance(queries, list) and len(queries) >= 1:
