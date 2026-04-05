@@ -324,8 +324,8 @@ async def _get_legal_context(question: str) -> str:
     """Query Jogszabály RAG for relevant legal context."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post("http://localhost:8103/search", json={
-                "query": question[:500],
+            resp = await client.get("http://localhost:8103/search", params={
+                "q": question[:500],
                 "top_k": 3,
             })
             if resp.status_code == 200:
