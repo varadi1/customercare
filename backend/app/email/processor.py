@@ -324,7 +324,7 @@ async def _get_legal_context(question: str) -> str:
     """Query Jogszabály RAG for relevant legal context."""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get("http://localhost:8103/search", params={
+            resp = await client.get("http://host.docker.internal:8103/search", params={
                 "q": question[:500],
                 "top_k": 3,
             })

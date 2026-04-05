@@ -610,6 +610,7 @@ async def draft_generate(req: DraftGenerateRequest):
 
     # 1b. Entity processing + reasoning trace (non-blocking)
     trace_id = None
+    ref_check = None
     try:
         if req.sender_email:
             import asyncpg as _apg
