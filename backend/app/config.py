@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"  # OpenAI fallback
     embedding_dimensions: int = 1024  # BGE-M3: 1024, OpenAI: 1536
 
+    # Anthropic (Claude — fallback 1)
+    anthropic_api_key: str = ""
+
+    # Google (Gemini — fallback 2)
+    google_api_key: str = ""
+
     # Cohere (reranking fallback)
     cohere_api_key: str = ""
     rerank_model: str = "rerank-v3.5"

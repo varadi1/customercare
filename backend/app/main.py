@@ -332,6 +332,21 @@ async def invalidate_chunks_endpoint(req: InvalidateRequest):
 
 # ─── Email: Polling ───────────────────────────────────────────────────────────
 
+@app.get("/llm/health")
+async def llm_health():
+    """Test all LLM providers and return status.
+
+    Returns provider availability + response time.
+    ALERT: if no provider is available, returns 503.
+    """
+    from .llm_client import health_check
+    results = await health_check()
+    any_ok = any(r.get("status") == "ok" for r in results.values())
+    if not any_ok:
+        raise HTTPException(status_code=503, detail={"error": "ALL LLM providers down", "providers": results})
+    return {"status": "ok" if any_ok else "critical", "providers": results}
+
+
 @app.post("/emails/process")
 async def process_emails(hours: float = 4):
     """Autonomous email processing — poll + filter + draft + save.
