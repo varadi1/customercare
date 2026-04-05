@@ -442,6 +442,9 @@ async def get_draft_context(req: DraftContextRequest):
 
 DRAFT_GENERATE_SYSTEM = """Te az OETP (Otthoni Energiatároló Program) ügyfélszolgálatának levélíró asszisztense vagy.
 
+KRITIKUS: A program neve OETP = Otthoni Energiatároló Program.
+NE keverd össze az "Otthonfelújítási Program"-mal — az egy MÁSIK program!
+
 FELADATOD:
 Egy beérkező ügyfél-emailre kell VÁLASZLEVÉL TERVEZETET írnod, KIZÁRÓLAG az alábbi ELLENŐRZÖTT TÉNYEK alapján.
 
@@ -451,12 +454,16 @@ SZIGORÚ SZABÁLYOK:
 3. SOHA ne egészítsd ki saját tudásból, ne találj ki dátumokat, összegeket, határidőket.
 4. Az ügyfél kérdésének MINDEN részére reagálj, ami a tényekből megválaszolható.
 5. Ha a tények csak RÉSZBEN fedik le → válaszolj ami van, a többire jelezd hogy kollégánk válaszol.
+6. Ha a tény KONKRÉT PONTSZÁMOT hivatkozik (pl. "3.3. pont", "4.1. pont"), MINDIG idézd a számot.
+7. SOHA ne írd "Otthonfelújítási Program" — a program neve: Otthoni Energiatároló Program (OETP).
 
 STÍLUS:
 - Udvarias, hivatalos, de barátságos hangnem
 - Tegezés SOHA, magázás/önözés MINDIG
 - Használj feltételes módot: "amennyiben", "abban az esetben"
-- Tömör, lényegre törő — ne legyen feleslegesen hosszú
+- TÖMÖRSÉG: Ha a válasz egyszerű (pl. "elvégeztük", "nincs lehetőség"), légy RÖVID — 1-3 mondat elég.
+  NE fejts ki részletesen amit a kérdés nem kér.
+- Ha a kérdés KOMPLEX (több részkérdés, technikai), válaszolj részletesen.
 - NE kezdd "Köszönjük megkeresését" sablonnal, hanem rögtön a lényegre térj
 
 VÁLASZ FORMÁTUM (szigorúan JSON):
@@ -493,10 +500,35 @@ Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
 ]
 
 
+def _build_greeting(sender_name: str = "", category: str = "") -> str:
+    """Build appropriate greeting based on sender name and email category.
+
+    Priority:
+    1. Personalized: "Tisztelt Kovács János!" (if name available and not generic)
+    2. Category-based: "Tisztelt Érdeklődő!" (for general inquiries)
+    3. Default: "Tisztelt Pályázó!" (matches colleague convention)
+    """
+    # Skip generic/empty names
+    skip_names = {"", "null", "none", "info", "admin", "support"}
+    name = (sender_name or "").strip()
+
+    if name and name.lower() not in skip_names and len(name) > 2:
+        # Check if it looks like a real name (not email prefix)
+        if "@" not in name and "." not in name:
+            return f"Tisztelt {name}!"
+
+    # Category-based
+    if category in ("altalanos", "hatarido"):
+        return "Tisztelt Érdeklődő!"
+
+    return "Tisztelt Pályázó!"
+
+
 class DraftGenerateRequest(BaseModel):
     email_text: str
     email_subject: str = ""
     sender_name: str = ""
+    sender_email: str = ""
     oetp_ids: list[str] = []
     pod_numbers: list[str] = []
     top_k: int = 5
@@ -533,9 +565,48 @@ async def draft_generate(req: DraftGenerateRequest):
             "sources": [],
         }
 
+    # 1b. Entity processing + reasoning trace (non-blocking)
+    trace_id = None
+    try:
+        if req.sender_email:
+            import asyncpg as _apg
+            _econn = await _apg.connect(
+                "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+            )
+            try:
+                from app.reasoning.person_tracker import process_email_entities
+                from app.reasoning.traces import create_trace
+                from app.rag.embeddings import embed_query
+
+                await process_email_entities(
+                    conn=_econn,
+                    sender_name=req.sender_name,
+                    sender_email=req.sender_email,
+                    oetp_ids=req.oetp_ids,
+                    email_subject=req.email_subject,
+                    category=ctx.get("category", ""),
+                )
+
+                query_emb = await embed_query(req.email_text[:500])
+                trace_id = await create_trace(
+                    conn=_econn,
+                    query_text=req.email_text[:2000],
+                    category=ctx.get("category", ""),
+                    sender_name=req.sender_name,
+                    sender_email=req.sender_email,
+                    query_embedding=query_emb if query_emb else None,
+                )
+            finally:
+                await _econn.close()
+    except Exception as _e:
+        import logging
+        logging.getLogger(__name__).warning("Entity/trace processing failed (non-blocking): %s", _e)
+
     rag_results = ctx.get("rag_results", [])
     style = ctx.get("style_guide", {})
-    greeting = style.get("suggested_greeting", "Tisztelt Pályázó!")
+
+    # Smart greeting: personalized if sender name available, else category-based
+    greeting = _build_greeting(req.sender_name, ctx.get("category", ""))
 
     if not rag_results:
         return {
@@ -673,6 +744,8 @@ Tárgy: {req.email_subject}
         "facts_count": len(verified_facts),
         "nli_verification": nli_result,
         "suggested_confidence": ctx.get("suggested_confidence"),
+        "similar_traces": ctx.get("similar_traces", []),
+        "trace_id": trace_id,
     }
 
 
@@ -696,6 +769,31 @@ async def feedback_check(mailbox: str | None = None, hours: int = 48):
     try:
         result = await feedback.check_feedback(mailbox=mailbox, hours=hours)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/reasoning/gaps")
+async def knowledge_gaps(days: int = 7):
+    """Generate knowledge gap report from reasoning traces.
+
+    Identifies topics where Hanna struggles (REJECTED, low confidence).
+    """
+    try:
+        from app.reasoning.knowledge_gaps import generate_gap_report
+        report = await generate_gap_report(days=days)
+        return report
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/reasoning/refresh-authority")
+async def refresh_authority():
+    """Recompute dynamic authority weight adjustments from traces."""
+    try:
+        from app.reasoning.authority_learner import refresh_adjustments_cache
+        adj = await refresh_adjustments_cache(days=30)
+        return {"status": "ok", "categories": len(adj), "adjustments": adj}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

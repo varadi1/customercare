@@ -195,10 +195,14 @@ async def build_draft_context(
             "feedback_hints": [],
         }
 
-    # 1. RAG search
+    # 1. Detect category early (needed for dynamic authority in search)
+    category = _categorize_email(email_subject, email_text)
+
+    # 2. RAG search (with email_category for dynamic authority)
     rag_results = await rag_search.search_async(
-        query=email_text[:2000],  # truncate for search
+        query=email_text[:2000],
         top_k=top_k,
+        email_category=category,
     )
 
     # Cross-references
@@ -209,10 +213,7 @@ async def build_draft_context(
     except Exception:
         pass
 
-    # 2. Detect category
-    category = _categorize_email(email_subject, email_text)
-
-    # 3. Load style patterns
+    # 3. Load style patterns (category already detected in step 1)
     patterns = load_patterns() or {}
     
     # 4. Extract category-specific style guide
@@ -246,6 +247,9 @@ async def build_draft_context(
 
     # 9. Feedback diff hints
     feedback_hints = _get_feedback_hints(category)
+
+    # 10. Similar past traces (reasoning memory)
+    similar_traces = await _get_similar_traces(email_text, category)
 
     return {
         "skip": False,
@@ -283,7 +287,63 @@ async def build_draft_context(
         "confidence_thresholds": confidence_thresholds,
         "suggested_confidence": suggested_confidence,
         "feedback_hints": feedback_hints,
+        "similar_traces": similar_traces,
     }
+
+
+async def _get_similar_traces(email_text: str, category: str) -> list[dict]:
+    """Find similar past reasoning traces for learning.
+
+    Returns up to 3 traces with successful outcomes,
+    formatted as context hints for draft generation.
+    """
+    import logging
+    _log = logging.getLogger(__name__)
+
+    try:
+        import asyncpg
+        from ..rag.embeddings import embed_query
+        from ..reasoning.traces import find_similar_traces
+
+        query_embedding = await embed_query(email_text[:500])
+        if not query_embedding:
+            return []
+
+        conn = await asyncpg.connect(
+            "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+        )
+        try:
+            traces = await find_similar_traces(
+                conn=conn,
+                query_embedding=query_embedding,
+                limit=3,
+                program="OETP",
+                min_similarity=0.6,
+            )
+        finally:
+            await conn.close()
+
+        # Format for draft context
+        hints = []
+        for t in traces:
+            hint = {
+                "query": t.get("query_text", "")[:200],
+                "outcome": t.get("outcome"),
+                "confidence": t.get("confidence"),
+                "cosine_sim": round(t.get("cosine_sim", 0), 3),
+            }
+            if t["outcome"] == "SENT_AS_IS":
+                hint["successful_draft"] = (t.get("draft_text") or "")[:300]
+            elif t["outcome"] == "SENT_MODIFIED":
+                hint["original_draft"] = (t.get("draft_text") or "")[:200]
+                hint["actual_sent"] = (t.get("sent_text") or "")[:200]
+            hints.append(hint)
+
+        return hints
+
+    except Exception as e:
+        _log.debug("Similar trace lookup failed (non-blocking): %s", e)
+        return []
 
 
 def _needs_legal_context(category: str, email_text: str, rag_results: list) -> dict:

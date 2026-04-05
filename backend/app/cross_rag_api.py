@@ -14,16 +14,25 @@ from typing import Optional
 
 import asyncpg
 
-# Add cross_rag_sync module to path
+# Add cross_rag_sync module to path (may not be available in all deployments)
 sys.path.insert(0, os.environ.get("CROSSRAG_SCRIPTS", "/app/crossrag_scripts"))
 
-from cross_rag_sync import (
-    CROSSRAG_DSN,
-    DB_CONFIGS,
-    get_crossrag_pool,
-    normalize_key,
-    get_canonical_type,
-)
+try:
+    from cross_rag_sync import (
+        CROSSRAG_DSN,
+        DB_CONFIGS,
+        get_crossrag_pool,
+        normalize_key,
+        get_canonical_type,
+    )
+except ImportError:
+    import logging as _log
+    _log.getLogger(__name__).warning("cross_rag_sync not available — cross-RAG API disabled")
+    CROSSRAG_DSN = ""
+    DB_CONFIGS = {}
+    async def get_crossrag_pool(): raise RuntimeError("cross_rag_sync not installed")
+    def normalize_key(k, t=""): return k.lower()
+    def get_canonical_type(t): return t
 
 # Source DB connection pools (lazy init)
 _source_pools: dict[str, asyncpg.Pool] = {}

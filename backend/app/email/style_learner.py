@@ -176,6 +176,11 @@ async def analyze_sent_items(
         if len(stripped) < 30:
             continue
 
+        # Skip Hanna AI drafts — they pollute style patterns with Hanna's own style
+        if ("Hanna AI Draft" in body_html or "🤖 Hanna" in body_html
+                or "Hanna - draft" in body_html or "background:#f0f0f0" in body_html):
+            continue
+
         features = _analyze_single_email(body_text)
         if not features:
             continue

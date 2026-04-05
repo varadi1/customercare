@@ -26,6 +26,9 @@ from bs4 import BeautifulSoup
 from .auth import get_auth_headers
 from .draft_store import get_recent_drafts
 
+import logging
+_logger = logging.getLogger(__name__)
+
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 # ─── Text Processing ─────────────────────────────────────────────────────────
@@ -452,4 +455,65 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
         results["details"].append(detail)
 
     results["status"] = "ok"
+
+    # ── Sync resolved drafts to reasoning_traces (non-blocking) ──
+    try:
+        await _sync_feedback_to_traces(results.get("details", []), drafts)
+    except Exception as e:
+        _logger.warning("Failed to sync feedback to reasoning traces: %s", e)
+
     return results
+
+
+async def _sync_feedback_to_traces(details: list[dict], drafts: list[dict]) -> None:
+    """Write feedback results to reasoning_traces table for learning.
+
+    Only syncs drafts that have a definitive outcome (not pending).
+    """
+    import asyncpg
+    from ..reasoning.traces import resolve_trace, create_trace
+
+    resolved_statuses = {"accepted_unchanged", "modified", "heavily_modified"}
+    to_sync = [d for d in details if d.get("status") in resolved_statuses]
+
+    if not to_sync:
+        return
+
+    conn = await asyncpg.connect(
+        "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+    )
+    try:
+        for detail in to_sync:
+            subject = detail.get("subject", "")
+            sim = detail.get("similarity", 0.0)
+            draft_text = detail.get("draft_text", "")
+            sent_text = detail.get("sent_text", "")
+
+            # Find matching draft for metadata
+            matching_draft = None
+            for d in drafts:
+                if _norm_subject(d.get("subject", ""))[:50] == _norm_subject(subject)[:50]:
+                    matching_draft = d
+                    break
+
+            # Create trace if not exists, then resolve
+            trace_id = await create_trace(
+                conn=conn,
+                query_text=subject,
+                category=detail.get("category", (matching_draft or {}).get("category", "")),
+                confidence=detail.get("confidence", (matching_draft or {}).get("confidence", "")),
+                draft_text=draft_text if draft_text else None,
+                sender_name=(matching_draft or {}).get("sender_name"),
+                sender_email=(matching_draft or {}).get("sender_email"),
+            )
+
+            await resolve_trace(
+                conn=conn,
+                trace_id=trace_id,
+                sent_text=sent_text or "",
+                similarity_score=sim,
+            )
+
+        _logger.info("Synced %d feedback results to reasoning_traces", len(to_sync))
+    finally:
+        await conn.close()

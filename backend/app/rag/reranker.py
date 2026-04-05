@@ -1,11 +1,10 @@
-"""Reranker — Local Contextual AI service with Cohere fallback."""
+"""Reranker — Local-only reranker service (no Cohere fallback)."""
 
 from __future__ import annotations
 
 import httpx
 from ..config import settings
 
-COHERE_RERANK_URL = "https://api.cohere.com/v2/rerank"
 LOCAL_RERANKER_URL = "http://host.docker.internal:8102"  # Native service on Mac
 
 # Status
@@ -27,31 +26,21 @@ async def _check_local_reranker() -> bool:
 
 
 async def initialize() -> str:
-    """Initialize the reranker.
-    
-    Tries local service first, falls back to Cohere.
-    
+    """Initialize the reranker (local only, no Cohere fallback).
+
     Returns:
-        String indicating which reranker is active: "local", "cohere", or "none"
+        String indicating which reranker is active: "local" or "none"
     """
     global _local_available, _mode
-    
-    # Try local reranker service
+
     if await _check_local_reranker():
         _local_available = True
         _mode = "local"
-        print("[hanna] Reranker: Using LOCAL Contextual AI 6B service (:8102)")
+        print("[hanna] Reranker: Using LOCAL BGE reranker v2-m3 service (:8102)")
         return "local"
-    
-    # Fall back to Cohere if API key available
-    if settings.cohere_api_key:
-        _local_available = False
-        _mode = "cohere"
-        print("[hanna] Reranker: Using COHERE API (local service not available)")
-        return "cohere"
-    
+
     _mode = "none"
-    print("[hanna] Reranker: NONE available (local down, no Cohere API key)")
+    print("[hanna] Reranker: Local service not available — returning unranked results (NO Cohere fallback)")
     return "none"
 
 
@@ -61,35 +50,32 @@ async def rerank(
     top_n: int | None = None,
     instruction: str = "",
 ) -> list[dict]:
-    """Rerank search results.
-    
-    Uses local Contextual AI service if available, falls back to Cohere API.
-    
-    Args:
-        query: The search query
-        documents: List of dicts with at least 'text' key
-        top_n: Number of top results to return (default: settings.rerank_top_k)
-        instruction: Optional instruction for local reranker (ignored by Cohere)
+    """Rerank search results using local service only.
 
-    Returns:
-        Reranked list of document dicts with updated scores
+    If local reranker is unavailable, returns documents unranked (no Cohere fallback).
     """
     if not documents:
         return []
-    
+
     top_n = top_n or settings.rerank_top_k
-    
-    # Try local reranker service first
-    if _local_available:
-        try:
-            result = await _rerank_local(query, documents, top_n, instruction)
-            if result is not None:
-                return result
-        except Exception as e:
-            print(f"[hanna] Local rerank failed, trying Cohere: {e}")
-    
-    # Cohere fallback
-    return await _rerank_cohere(query, documents, top_n)
+
+    if not _local_available:
+        # Re-check in case the service came back up
+        if await _check_local_reranker():
+            global _mode
+            _local_available_update = True
+            globals()['_local_available'] = True
+            _mode = "local"
+            print("[hanna] Reranker: Local service recovered (:8102)")
+        else:
+            return documents[:top_n]
+
+    result = await _rerank_local(query, documents, top_n, instruction)
+    if result is not None:
+        return result
+
+    print("[hanna] Local rerank failed, returning unranked results")
+    return documents[:top_n]
 
 
 async def _rerank_local(
@@ -100,7 +86,7 @@ async def _rerank_local(
 ) -> list[dict] | None:
     """Rerank using local Contextual AI service."""
     doc_texts = [d["text"] for d in documents]
-    
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
@@ -114,68 +100,21 @@ async def _rerank_local(
             )
             resp.raise_for_status()
             data = resp.json()
-        
-        # Map reranked results back to original documents
+
         reranked = []
         for item in data.get("results", []):
             idx = item["index"]
             doc = documents[idx].copy()
             doc["score"] = round(item["score"], 4)
             doc["rerank_score"] = round(item["score"], 4)
-            doc["reranker"] = "contextual-ai-6b"
+            doc["reranker"] = "bge-reranker-v2-m3"
             reranked.append(doc)
-        
+
         return reranked
-        
+
     except Exception as e:
         print(f"[hanna] Local reranker error: {e}")
         return None
-
-
-async def _rerank_cohere(
-    query: str,
-    documents: list[dict],
-    top_n: int,
-) -> list[dict]:
-    """Rerank using Cohere API (fallback)."""
-    if not settings.cohere_api_key:
-        print("[hanna] No Cohere API key, returning unranked results")
-        return documents[:top_n]
-
-    doc_texts = [d["text"] for d in documents]
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                COHERE_RERANK_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.cohere_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": settings.rerank_model,
-                    "query": query,
-                    "documents": doc_texts,
-                    "top_n": min(top_n, len(documents)),
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-
-        reranked = []
-        for item in data.get("results", []):
-            idx = item["index"]
-            doc = documents[idx].copy()
-            doc["score"] = round(item["relevance_score"], 4)
-            doc["rerank_score"] = round(item["relevance_score"], 4)
-            doc["reranker"] = "cohere"
-            reranked.append(doc)
-
-        return reranked
-
-    except Exception as e:
-        print(f"[hanna] Cohere rerank failed, returning unranked: {e}")
-        return documents[:top_n]
 
 
 def rerank_sync(
@@ -206,5 +145,5 @@ def get_status() -> dict:
         "mode": _mode,
         "local_available": _local_available,
         "local_url": LOCAL_RERANKER_URL,
-        "cohere_configured": bool(settings.cohere_api_key),
+        "cohere_configured": False,
     }

@@ -127,11 +127,41 @@ async def poll_mailbox(
         state[mailbox] = datetime.now(timezone.utc).isoformat()
         _save_state(state)
 
+    # Register email senders as KG entities (non-blocking)
+    if messages:
+        try:
+            await _register_email_entities(messages)
+        except Exception as e:
+            print(f"[poller] Entity registration failed (non-blocking): {e}")
+
     return PollResult(
         new_emails=len(messages),
         mailbox=mailbox,
         messages=messages,
     )
+
+
+async def _register_email_entities(messages: list[EmailMessage]) -> None:
+    """Register senders as person+org+application entities in KG."""
+    import asyncpg
+    from ..reasoning.person_tracker import process_email_entities
+
+    conn = await asyncpg.connect(
+        "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+    )
+    try:
+        for msg in messages:
+            if not msg.sender_email:
+                continue
+            await process_email_entities(
+                conn=conn,
+                sender_name=msg.sender,
+                sender_email=msg.sender_email,
+                oetp_ids=msg.oetp_ids,
+                email_subject=msg.subject,
+            )
+    finally:
+        await conn.close()
 
 
 async def poll_all_mailboxes(hours: float | None = None) -> list[PollResult]:

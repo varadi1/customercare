@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     answer_max_tokens: int = 1500
     answer_temperature: float = 0.1
 
+    # RADIX pályázati rendszer API
+    radix_api_url: str = ""          # e.g. "https://radix.neuzrt.hu/api/v1"
+    radix_api_key: str = ""          # API key for authentication
+    radix_enabled: bool = False      # Feature flag — disabled until API is available
+
     class Config:
         env_prefix = ""
 

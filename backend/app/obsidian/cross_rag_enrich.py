@@ -21,9 +21,15 @@ from typing import Any
 
 import asyncpg
 
-# Cross-RAG module
+# Cross-RAG module (lazy — may not be available in all deployments)
 sys.path.insert(0, os.environ.get("CROSSRAG_SCRIPTS", "/app/crossrag_scripts"))
-from cross_rag_sync import CROSSRAG_DSN, get_crossrag_pool
+try:
+    from cross_rag_sync import CROSSRAG_DSN, get_crossrag_pool
+except ImportError:
+    import logging as _log
+    _log.getLogger(__name__).warning("cross_rag_sync not available — cross-RAG enrichment disabled")
+    CROSSRAG_DSN = ""
+    async def get_crossrag_pool(): raise RuntimeError("cross_rag_sync not installed")
 
 # NEÜ Docs DB
 KLARA_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/neu_docs"
