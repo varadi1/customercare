@@ -31,11 +31,11 @@ services:
       - GRAPH_CLIENT_SECRET=${GRAPH_CLIENT_SECRET}
       - GRAPH_USER_EMAIL=${GRAPH_USER_EMAIL}
       - SHARED_MAILBOXES=${SHARED_MAILBOXES:-info@neuzrt.hu,lakossagienergetika@neuzrt.hu}
-      - OETP_DB_HOST=185.187.73.44
-      - OETP_DB_PORT=3307
-      - OETP_DB_USER=tarolo_readonly
-      - OETP_DB_PASSWORD=FRKGabiJ9zW7vh8r
-      - OETP_DB_ENABLED=true
+      - OETP_DB_HOST=${OETP_DB_HOST:-185.187.73.44}
+      - OETP_DB_PORT=${OETP_DB_PORT:-3307}
+      - OETP_DB_USER=${OETP_DB_USER:-tarolo_readonly}
+      - OETP_DB_PASSWORD=${OETP_DB_PASSWORD}
+      - OETP_DB_ENABLED=${OETP_DB_ENABLED:-false}
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "10", "http://localhost:8000/livez"]
       interval: 60s
