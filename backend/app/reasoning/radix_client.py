@@ -1,160 +1,190 @@
 """
-RADIX API client — fetches applicant data from the pályázati rendszer.
+OETP pályázati adatbázis client — fetches applicant data from MySQL.
 
-Enabled via .env:
-  RADIX_API_URL=https://radix.neuzrt.hu/api/v1
-  RADIX_API_KEY=your-api-key
-  RADIX_ENABLED=true
+Connection: MySQL readonly (tarolo_neuzrt_hu_db)
+Config via .env: OETP_DB_HOST, OETP_DB_PORT, OETP_DB_USER, OETP_DB_PASSWORD, OETP_DB_NAME
+Feature flag: OETP_DB_ENABLED (default: false)
 
-All functions return None/empty if RADIX is not configured (non-blocking).
+All functions return None/empty if DB is not configured (non-blocking).
 """
 from __future__ import annotations
 
 import logging
 from typing import Any, Optional
 
-import httpx
-
 from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = 10  # seconds
 
-
-async def is_available() -> bool:
-    """Check if RADIX API is configured and reachable."""
-    if not settings.radix_enabled or not settings.radix_api_url:
-        return False
+def _get_connection():
+    """Get MySQL connection (sync — pymysql)."""
+    if not settings.oetp_db_enabled:
+        return None
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(
-                f"{settings.radix_api_url}/health",
-                headers=_auth_headers(),
-            )
-            return resp.status_code == 200
-    except Exception:
-        return False
+        import pymysql
+        return pymysql.connect(
+            host=settings.oetp_db_host,
+            port=settings.oetp_db_port,
+            user=settings.oetp_db_user,
+            password=settings.oetp_db_password,
+            database=settings.oetp_db_name,
+            connect_timeout=5,
+            read_timeout=10,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+        )
+    except Exception as e:
+        logger.warning("OETP DB connection failed: %s", e)
+        return None
 
 
-async def get_application(oetp_id: str) -> Optional[dict[str, Any]]:
-    """Fetch application data by OETP-ID.
+def get_application(oetp_id: str) -> Optional[dict[str, Any]]:
+    """Fetch application data by OETP pályázati kódszám.
 
-    Returns None if RADIX is not configured or application not found.
+    Returns None if not found or DB not configured.
     """
-    if not settings.radix_enabled or not settings.radix_api_url:
+    conn = _get_connection()
+    if not conn:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                f"{settings.radix_api_url}/applications/{oetp_id}",
-                headers=_auth_headers(),
-            )
-            if resp.status_code == 200:
-                return resp.json()
-            elif resp.status_code == 404:
-                logger.debug("Application %s not found in RADIX", oetp_id)
-                return None
-            else:
-                logger.warning("RADIX API error for %s: %d", oetp_id, resp.status_code)
-                return None
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    c.palyazati_kodszam,
+                    c.status,
+                    c.step,
+                    c.palyazo_neve,
+                    c.palyazo_email,
+                    c.meghatalmazott_neve,
+                    c.megbizott_email,
+                    c.palyazo_telepules,
+                    c.palyazo_megye,
+                    c.megvalositasi_telepules,
+                    c.megvalositasi_megye,
+                    c.celterulet,
+                    c.igenyelt_tamogatas,
+                    c.jovahagyott_tamogatas,
+                    c.megitelt_tamogatas,
+                    c.nyilatkozat,
+                    c.veglegesites,
+                    c.szaldo_status,
+                    c.pod,
+                    c.dealer_id,
+                    d.name AS dealer_name
+                FROM competitions c
+                LEFT JOIN dealers d ON d.id = c.dealer_id
+                WHERE c.palyazati_kodszam = %s
+                  AND c.deleted = 0
+                LIMIT 1
+            """, (oetp_id,))
+            row = cursor.fetchone()
+            return row
     except Exception as e:
-        logger.warning("RADIX API connection failed: %s", e)
+        logger.warning("OETP DB query failed for %s: %s", oetp_id, e)
         return None
+    finally:
+        conn.close()
 
 
-async def get_applications_by_email(email: str) -> list[dict[str, Any]]:
+def get_applications_by_email(email: str) -> list[dict[str, Any]]:
     """Find applications linked to an email address."""
-    if not settings.radix_enabled or not settings.radix_api_url:
+    conn = _get_connection()
+    if not conn:
         return []
 
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(
-                f"{settings.radix_api_url}/applications",
-                params={"email": email},
-                headers=_auth_headers(),
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return data if isinstance(data, list) else data.get("results", [])
-            return []
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT palyazati_kodszam, status, palyazo_neve,
+                       igenyelt_tamogatas, celterulet
+                FROM competitions
+                WHERE (palyazo_email = %s OR megbizott_email = %s)
+                  AND deleted = 0
+                ORDER BY nyilatkozat DESC
+                LIMIT 10
+            """, (email, email))
+            return cursor.fetchall()
     except Exception as e:
-        logger.warning("RADIX API search failed: %s", e)
+        logger.warning("OETP DB email search failed: %s", e)
         return []
+    finally:
+        conn.close()
+
+
+# Status code mapping
+STATUS_MAP = {
+    0: "Piszkozat",
+    1: "Benyújtva",
+    2: "Formai ellenőrzés alatt",
+    3: "Értékelés alatt",
+    4: "Hiánypótlás",
+    5: "Döntésre vár",
+    6: "Nyertes",
+    7: "Nem nyertes",
+    8: "Elutasított",
+    9: "Visszavont",
+    10: "Szerződéskötés",
+    11: "Megvalósítás",
+    12: "Elszámolás",
+    13: "Lezárt",
+}
+
+CELTERULET_MAP = {
+    1: "1. célterület: Új napelem + tároló",
+    2: "2. célterület: Meglévő rendszer bővítése tárolóval",
+}
+
+
+def format_applicant_context(data: dict[str, Any]) -> str:
+    """Format applicant data as LLM-readable context block."""
+    if not data:
+        return ""
+
+    status_text = STATUS_MAP.get(data.get("status"), f"Ismeretlen ({data.get('status')})")
+    celterulet_text = CELTERULET_MAP.get(data.get("celterulet"), "")
+
+    lines = ["[PÁLYÁZÓI ADATOK — OETP adatbázisból]"]
+    lines.append(f"- Pályázati kódszám: {data.get('palyazati_kodszam', '?')}")
+    lines.append(f"- Pályázó neve: {data.get('palyazo_neve', '?')}")
+    lines.append(f"- Státusz: {status_text}")
+
+    if data.get("meghatalmazott_neve"):
+        lines.append(f"- Meghatalmazott: {data['meghatalmazott_neve']}")
+    if celterulet_text:
+        lines.append(f"- Célterület: {celterulet_text}")
+    if data.get("megvalositasi_telepules"):
+        lines.append(f"- Megvalósítás helye: {data['megvalositasi_telepules']}, {data.get('megvalositasi_megye', '')}")
+    if data.get("igenyelt_tamogatas"):
+        lines.append(f"- Igényelt támogatás: {data['igenyelt_tamogatas']:,} Ft".replace(",", " "))
+    if data.get("jovahagyott_tamogatas"):
+        lines.append(f"- Jóváhagyott támogatás: {data['jovahagyott_tamogatas']:,} Ft".replace(",", " "))
+    if data.get("dealer_name"):
+        lines.append(f"- Kivitelező: {data['dealer_name']}")
+    if data.get("pod"):
+        lines.append(f"- POD szám: {data['pod']}")
+
+    return "\n".join(lines)
 
 
 async def enrich_draft_context(
     oetp_ids: list[str],
     sender_email: str = "",
 ) -> dict[str, Any]:
-    """Fetch all relevant RADIX data for draft generation.
-
-    Returns structured dict for LLM context, or empty dict if unavailable.
-    """
-    if not settings.radix_enabled:
+    """Fetch all relevant OETP data for draft generation."""
+    if not settings.oetp_db_enabled:
         return {}
 
     result = {"applications": [], "sender_applications": []}
 
-    # Fetch by OETP-ID
-    for oetp_id in oetp_ids[:5]:  # max 5 to avoid rate limiting
-        app_data = await get_application(oetp_id)
+    for oetp_id in oetp_ids[:5]:
+        app_data = get_application(oetp_id)
         if app_data:
-            result["applications"].append({
-                "oetp_id": oetp_id,
-                "status": app_data.get("status"),
-                "applicant_name": app_data.get("applicant_name"),
-                "submission_date": app_data.get("submission_date"),
-                "target_area": app_data.get("target_area"),
-                "decision": app_data.get("decision"),
-                "phase": app_data.get("phase"),
-                "representative": app_data.get("representative_name"),
-            })
+            result["applications"].append(app_data)
 
-    # Fetch by sender email (if no OETP-ID provided)
     if not oetp_ids and sender_email:
-        apps = await get_applications_by_email(sender_email)
-        for app in apps[:3]:
-            result["sender_applications"].append({
-                "oetp_id": app.get("oetp_id"),
-                "status": app.get("status"),
-                "applicant_name": app.get("applicant_name"),
-            })
+        apps = get_applications_by_email(sender_email)
+        result["sender_applications"] = apps
 
     return result if result["applications"] or result["sender_applications"] else {}
-
-
-def format_radix_context(data: dict[str, Any]) -> str:
-    """Format RADIX data as LLM-readable context block."""
-    if not data:
-        return ""
-
-    lines = ["[PÁLYÁZÓI ADATOK — RADIX rendszerből]"]
-
-    for app in data.get("applications", []):
-        lines.append(f"- Pályázat: {app.get('oetp_id', '?')}")
-        if app.get("applicant_name"):
-            lines.append(f"  Pályázó: {app['applicant_name']}")
-        if app.get("status"):
-            lines.append(f"  Státusz: {app['status']}")
-        if app.get("decision"):
-            lines.append(f"  Döntés: {app['decision']}")
-        if app.get("phase"):
-            lines.append(f"  Szakasz: {app['phase']}")
-        if app.get("representative"):
-            lines.append(f"  Meghatalmazott: {app['representative']}")
-
-    for app in data.get("sender_applications", []):
-        lines.append(f"- Pályázat: {app.get('oetp_id', '?')} ({app.get('status', '?')})")
-
-    return "\n".join(lines)
-
-
-def _auth_headers() -> dict[str, str]:
-    """Build authentication headers for RADIX API."""
-    headers = {"Accept": "application/json"}
-    if settings.radix_api_key:
-        headers["X-API-Key"] = settings.radix_api_key
-    return headers

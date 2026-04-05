@@ -52,10 +52,13 @@ class Settings(BaseSettings):
     answer_max_tokens: int = 1500
     answer_temperature: float = 0.1
 
-    # RADIX pályázati rendszer API
-    radix_api_url: str = ""          # e.g. "https://radix.neuzrt.hu/api/v1"
-    radix_api_key: str = ""          # API key for authentication
-    radix_enabled: bool = False      # Feature flag — disabled until API is available
+    # OETP MySQL database (readonly)
+    oetp_db_host: str = "185.187.73.44"
+    oetp_db_port: int = 3307
+    oetp_db_user: str = "tarolo_readonly"
+    oetp_db_password: str = ""       # Set in .env: OETP_DB_PASSWORD
+    oetp_db_name: str = "tarolo_neuzrt_hu_db"
+    oetp_db_enabled: bool = False    # Feature flag — set to true when password configured
 
     class Config:
         env_prefix = ""

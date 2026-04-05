@@ -680,7 +680,18 @@ async def draft_generate(req: DraftGenerateRequest):
 Tárgy: {req.email_subject}
 
 {facts_block}
+
 {style_hint}"""
+
+    # 3b. OETP applicant data (if available and OETP-ID in email)
+    try:
+        from app.reasoning.radix_client import enrich_draft_context, format_applicant_context
+        oetp_data = await enrich_draft_context(oetp_ids=req.oetp_ids, sender_email=req.sender_email)
+        if oetp_data:
+            for app in oetp_data.get("applications", []):
+                user_msg += "\n\n" + format_applicant_context(app)
+    except Exception:
+        pass
 
     # 4. LLM generation — reformulate facts into coherent email
     from openai import OpenAI
