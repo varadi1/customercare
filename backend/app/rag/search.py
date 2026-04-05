@@ -334,6 +334,7 @@ async def search_async(
     category: str | None = None,
     chunk_type: str | None = None,
     only_valid: bool = True,
+    email_category: str | None = None,
 ) -> list[dict]:
     """Async hybrid search pipeline:
     
@@ -458,6 +459,17 @@ async def search_async(
 
             # Stage 5: Authority weighting + floor (uses chunk_type from metadata)
             weighted = apply_authority_weighting(reranked)
+
+            # Dynamic authority adjustment (learned from traces)
+            if email_category:
+                try:
+                    from ..reasoning.authority_learner import apply_learned_adjustments, get_cached_adjustments
+                    adj = get_cached_adjustments()
+                    if adj:
+                        weighted = apply_learned_adjustments(weighted, email_category, adj)
+                except Exception:
+                    pass
+
             return weighted[:final_k]
         except Exception as e:
             print(f"[hanna-oetp] Rerank failed: {e}")
