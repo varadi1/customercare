@@ -47,7 +47,7 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 ### Fájlstruktúra
 
 ```
-~/.openclaw/hanna/
+~/DEV/hanna/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                 # FastAPI app, összes endpoint
@@ -615,14 +615,84 @@ Ha a primary provider nem elérhető, automatikusan a következőre vált. `GET 
 
 ```bash
 # Docker Compose (Backend — önálló, scheduler-rel)
-cd ~/Library/CloudStorage/Dropbox/\!OpenClaw/hanna
+cd ~/DEV/hanna
 docker compose up -d
+
+# Rebuild after code changes
+docker compose build backend && docker compose up -d --force-recreate backend
 
 # Natív szolgáltatások (LaunchAgent-ek):
 # com.openclaw.bge-m3-search   — BGE-M3 embedding (:8104)
 # com.openclaw.bge-m3-ingest   — BGE-M3 embedding (:8114)
 # com.openclaw.hanna-reranker  — BGE v2-m3 reranker (:8102)
 # com.hanna.weekly-gap-report  — Heti knowledge gap riport (H 06:00)
+```
+
+### Tesztelés
+
+```bash
+cd ~/DEV/hanna/backend
+
+# Unit + integration tesztek (47 teszt, valós PostgreSQL, transaction rollback)
+python3 -m pytest tests/ -v
+
+# Golden set eval (10 kérdés)
+docker exec -i hanna-backend python3 /app/scripts/eval_golden_set.py
+
+# 100-email eval (semantic + style scoring)
+docker exec -i hanna-backend python3 /app/scripts/eval_100_emails.py --limit 100 --days 30
+```
+
+### CLI Parancsok
+
+```bash
+# Kézi email feldolgozás (poll + filter + draft, N órás ablak)
+curl -X POST "http://localhost:8101/emails/process?hours=4"
+
+# LLM provider health check
+curl http://localhost:8101/llm/health
+
+# Scheduler állapot (utolsó futás, eredmény)
+curl http://localhost:8101/scheduler/status
+
+# Knowledge gap riport
+curl "http://localhost:8101/reasoning/gaps?days=7"
+
+# Authority weight frissítés
+curl -X POST http://localhost:8101/reasoning/refresh-authority
+
+# Feedback check (draft vs elküldött összehasonlítás)
+curl -X POST "http://localhost:8101/emails/feedback/check?hours=48"
+
+# DB migráció (reasoning_traces tábla + indexek — egyszeri)
+docker exec -i hanna-backend python3 /app/scripts/migrate_reasoning.py
+```
+
+### Környezeti Változók (.env)
+
+```bash
+# LLM Providers
+OPENAI_API_KEY=sk-...          # Primary: gpt-5.4-mini
+ANTHROPIC_API_KEY=sk-ant-...   # Fallback 1: claude-sonnet-4-6
+GOOGLE_API_KEY=AIza...         # Fallback 2: gemini-flash-latest
+COHERE_API_KEY=...             # Reranker fallback
+
+# Email (MS Graph API)
+GRAPH_TENANT_ID=...
+GRAPH_CLIENT_ID=...
+GRAPH_CLIENT_SECRET=...
+SHARED_MAILBOXES=lakossagitarolo@neuzrt.hu
+
+# OETP MySQL (readonly — pályázó adatok)
+OETP_DB_PASSWORD=...
+OETP_DB_ENABLED=true
+
+# Discord (bot notifications)
+DISCORD_BOT_TOKEN=...
+DISCORD_CHANNEL_ID=...
+
+# Autonomous processing
+AUTO_PROCESS_ENABLED=true
 ```
 
 ---
@@ -753,4 +823,4 @@ A `GET /llm/health` endpoint teszteli mind a 3 providert és 503-at ad ha **egyi
 
 ---
 
-*Készítette: Bob — 2026-02-12 | Frissítve: 2026-04-06 (Discord bot, Jogszabály RAG, scheduler monitoring, 11 teszt)*
+*Készítette: Bob — 2026-02-12 | Frissítve: 2026-04-06 (önálló rendszer ~/DEV/hanna, gpt-5.4-mini, 47 teszt, Discord bot)*
