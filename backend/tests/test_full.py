@@ -225,26 +225,17 @@ class TestLLMClientExtended:
 # ============================================================
 class TestSkipFilter:
     def test_thank_you_skip(self):
-        try:
-            from app.email.skip_filter import check_skip
-        except ImportError:
-            pytest.skip("msal not installed locally")
+        from app.email.skip_filter import check_skip
         r = check_skip("Köszönöm a válaszukat, minden világos.", "RE: Válasz")
         assert r["skip"] is True
 
     def test_normal_question_not_skipped(self):
-        try:
-            from app.email.skip_filter import check_skip
-        except ImportError:
-            pytest.skip("msal not installed locally")
+        from app.email.skip_filter import check_skip
         r = check_skip("Mikor kapom meg a támogatási döntést az OETP pályázatomra?", "Pályázat státusz")
         assert r["skip"] is False
 
     def test_auto_reply_skip(self):
-        try:
-            from app.email.skip_filter import check_skip
-        except ImportError:
-            pytest.skip("msal not installed locally")
+        from app.email.skip_filter import check_skip
         r = check_skip("I am out of office.", "Automatic reply: Out of Office")
         assert r["skip"] is True
 

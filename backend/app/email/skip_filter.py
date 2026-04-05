@@ -8,7 +8,22 @@ from __future__ import annotations
 
 import re
 
-from .style_learner import _strip_quoted
+
+def _strip_quoted(text: str) -> str:
+    """Remove quoted/forwarded parts from email text."""
+    lines = text.split("\n")
+    clean = []
+    for line in lines:
+        if line.strip().startswith(">"):
+            break
+        if re.match(r"^-{3,}\s*(Eredeti|Original|Forwarded)", line, re.IGNORECASE):
+            break
+        if re.match(r"^(From|Feladó|Tárgy|Subject|Sent|Dátum|Date):", line):
+            break
+        if "írta:" in line and "@" in line:
+            break
+        clean.append(line)
+    return "\n".join(clean).strip()
 
 
 # ─── Thank-you / Acknowledgment detection ────────────────────────────────────
