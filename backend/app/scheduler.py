@@ -138,16 +138,29 @@ async def _run_style_refresh():
         logger.error("Scheduler: style refresh failed: %s", e)
 
 
-async def _notify_discord_run(stats: dict) -> None:
-    """Send run summary to Discord (only if drafts created or errors)."""
-    if not settings.discord_webhook_url:
-        return
+async def _send_discord(msg: str) -> None:
+    """Send message to Discord via webhook or bot token."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            if settings.discord_webhook_url:
+                await client.post(settings.discord_webhook_url, json={"content": msg})
+            elif settings.discord_bot_token and settings.discord_channel_id:
+                await client.post(
+                    f"https://discord.com/api/v10/channels/{settings.discord_channel_id}/messages",
+                    headers={"Authorization": f"Bot {settings.discord_bot_token}"},
+                    json={"content": msg},
+                )
+            else:
+                return
+    except Exception as e:
+        logger.debug("Discord send failed: %s", e)
 
+
+async def _notify_discord_run(stats: dict) -> None:
+    """Send run summary to Discord (only if something happened)."""
     drafts = stats.get("drafts_created", 0)
     errors = stats.get("errors", 0)
     polled = stats.get("emails_polled", 0)
-
-    # Only notify if something happened
     if drafts == 0 and errors == 0 and polled == 0:
         return
 
@@ -162,24 +175,12 @@ async def _notify_discord_run(stats: dict) -> None:
     )
     if errors > 0:
         msg += f" | ❌ **{errors} ERROR**"
-
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(settings.discord_webhook_url, json={"content": msg})
-    except Exception as e:
-        logger.debug("Discord notify failed: %s", e)
+    await _send_discord(msg)
 
 
 async def _notify_discord_error(error: str) -> None:
     """Send error alert to Discord."""
-    if not settings.discord_webhook_url:
-        return
-    msg = f"🚨 **Hanna HIBA** | Scheduler error: {error[:200]}"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(settings.discord_webhook_url, json={"content": msg})
-    except Exception:
-        pass
+    await _send_discord(f"🚨 **Hanna HIBA** | {error[:200]}")
 
 
 async def _run_weekly_report():

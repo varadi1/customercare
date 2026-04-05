@@ -58,8 +58,10 @@ class Settings(BaseSettings):
     answer_max_tokens: int = 1500
     answer_temperature: float = 0.1
 
-    # Discord webhook (optional — for processing notifications)
-    discord_webhook_url: str = ""    # .env: DISCORD_WEBHOOK_URL
+    # Discord notifications (optional)
+    discord_webhook_url: str = ""      # Webhook URL (if available)
+    discord_bot_token: str = ""        # Bot token (alternative to webhook)
+    discord_channel_id: str = ""       # Channel ID for bot messages
 
     # Autonomous processing
     auto_process_enabled: bool = False  # Feature flag for autonomous email processing

@@ -39,6 +39,8 @@ services:
       - OETP_DB_PASSWORD=${OETP_DB_PASSWORD}
       - OETP_DB_ENABLED=${OETP_DB_ENABLED:-false}
       - AUTO_PROCESS_ENABLED=${AUTO_PROCESS_ENABLED:-false}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "10", "http://localhost:8000/livez"]
       interval: 60s
