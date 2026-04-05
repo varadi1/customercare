@@ -506,9 +506,9 @@ Post-generation ellenőrzés:
 
 | Eval típus | Script | Eredmény |
 |---|---|---|
-| 71 valós email | `eval_100_emails.py` | 72% MATCH, 0% MISMATCH, sem avg 0.76 |
-| 10 golden set kérdés | `eval_golden_set.py` | 78% PASS, 0% FAIL |
-| Stílus score | beépített | 0.846 avg (greeting 0.80, closing 0.97) |
+| 71 valós email (gpt-4o-mini) | `eval_100_emails.py` | 72% MATCH, 0% MISMATCH, sem avg 0.76 |
+| 10 golden set (gpt-5.4-mini) | `eval_golden_set.py` | 78% PASS, 0% FAIL, sem 0.673, style 0.686 |
+| Stílus score (gpt-4o-mini) | beépített | 0.846 avg (greeting 0.80, closing 0.97) |
 
 ---
 
@@ -558,31 +558,58 @@ Futtatás: `python3 scripts/verify_ingest.py --fix --report`
 | Vector DB | PostgreSQL + pgvector (hanna_oetp + neu_docs DB), :5433 |
 | Embeddings | BGE-M3 (lokális, MPS GPU), :8104 (search) / :8114 (ingest) |
 | Reranker | BGE v2-m3 (lokális, MPS GPU, :8102), Cohere v3.5 fallback |
-| Query Expansion | gpt-4o-mini |
-| HyDE | gpt-4o-mini |
-| Draft Generation | gpt-4o-mini (JSON mode, few-shot) |
+| LLM (primary) | OpenAI gpt-5.4-mini (multi-provider, automatic fallback) |
+| LLM (fallback 1) | Anthropic claude-sonnet-4-6 |
+| LLM (fallback 2) | Google gemini-flash-latest |
+| Vision | OpenAI gpt-5.4 (csatolmány elemzés) |
 | NLI Verification | Lokális szolgáltatás, :8107 |
 | VerbatimRAG | Lokális szolgáltatás, :8108 |
 | Email | Microsoft Graph API (Outlook 365, Azure AD) |
 | Knowledge Graph | PostgreSQL táblák (entities + relations + entity-chunks + reasoning_traces) |
 | OETP Pályázati DB | MySQL readonly (tarolo_neuzrt_hu_db, :3307) |
-| Csatolmány elemzés | GPT-4o Vision |
 | Chunking | tiktoken (cl100k_base), 500 token / 100 overlap |
 | Hosting | Docker Compose, Mac Studio M3 Ultra |
 
 ---
 
-## Futtatás
+## Önálló Működés (v2 — 2026-04-05)
+
+Hanna **teljesen önálló rendszer** — nem függ az OpenClaw agenttől. Beépített scheduler kezeli az email feldolgozást.
+
+### Scheduler
+
+**Fájl:** `app/scheduler.py` | Feature flag: `AUTO_PROCESS_ENABLED=true`
+
+| Ütemezés | Feladat |
+|----------|---------|
+| Minden 2 óra | Email poll + filter + draft generálás |
+| Naponta 05:00 | Feedback check (draft vs elküldött összehasonlítás) |
+| Hetente (H 06:00) | Knowledge gap riport + authority weight frissítés |
+
+### Multi-Provider LLM (automatic fallback)
+
+**Fájl:** `app/llm_client.py`
+
+| Prioritás | Provider | Modell | Válaszidő |
+|-----------|----------|--------|-----------|
+| Primary | OpenAI | gpt-5.4-mini | ~735ms |
+| Fallback 1 | Anthropic | claude-sonnet-4-6 | ~1669ms |
+| Fallback 2 | Google | gemini-flash-latest | ~946ms |
+
+Ha a primary provider nem elérhető, automatikusan a következőre vált. `GET /llm/health` teszteli mind a 3 providert.
+
+### Futtatás
 
 ```bash
-# Docker Compose (Backend)
-cd ~/.openclaw/hanna
+# Docker Compose (Backend — önálló, scheduler-rel)
+cd ~/Library/CloudStorage/Dropbox/\!OpenClaw/hanna
 docker compose up -d
 
 # Natív szolgáltatások (LaunchAgent-ek):
 # com.openclaw.bge-m3-search   — BGE-M3 embedding (:8104)
 # com.openclaw.bge-m3-ingest   — BGE-M3 embedding (:8114)
 # com.openclaw.hanna-reranker  — BGE v2-m3 reranker (:8102)
+# com.hanna.weekly-gap-report  — Heti knowledge gap riport (H 06:00)
 ```
 
 ---
@@ -608,6 +635,7 @@ docker compose up -d
 
 | Endpoint | Metódus | Leírás |
 |----------|---------|--------|
+| `/emails/process` | POST | **Önálló feldolgozás**: poll + filter + draft + save (hours param) |
 | `/emails/poll` | POST | Új emailek lekérdezése (összes mailbox) |
 | `/emails/thread/{mailbox}/{id}` | GET | Email thread lekérés |
 | `/emails/draft` | POST | Válasz-tervezet mentése Outlook-ba |
@@ -626,6 +654,7 @@ docker compose up -d
 | `/draft/generate` | POST | Grounded email draft generálás (VerbatimRAG + NLI + OETP DB + ref check) |
 | `/reasoning/gaps` | GET | Knowledge gap report (days param) |
 | `/reasoning/refresh-authority` | POST | Dynamic authority weight újraszámítás |
+| `/llm/health` | GET | Mind 3 LLM provider tesztelése (503 ha mind leáll) |
 
 ### Stílus
 
@@ -696,15 +725,18 @@ Egy 2026. márciusi cross-system audit szerint az architektúra a produkciós RA
 | Temporal filtering (valid_from/valid_to) | ✅ Minden rendszerben |
 | Cascade routing (kérdéstípus → LLM) | ✅ Hanna |
 
-### Cascade Routing
+### Multi-Provider LLM Failover
 
-A `/draft/generate` endpoint `model` paraméterrel elfogadja a használandó LLM-et. Az alapértelmezett `gpt-4o-mini`, de a hívó rendszer (OpenClaw agent) a kérdés komplexitása és a retrieval confidence alapján dönthet:
+A Hanna minden LLM hívást az `llm_client.py`-on keresztül végez, ami 3 provider között automatikusan fallback-el:
 
-- **Egyszerű ténykérdés + high confidence** → `gpt-4o-mini` (~$0.001/query)
-- **Összetett/bizonytalan kérdés** → `gpt-4o` vagy nagyobb modell
+1. **OpenAI gpt-5.4-mini** — primary (leggyorsabb, legolcsóbb)
+2. **Anthropic claude-sonnet-4-6** — fallback 1 (ha OpenAI nem elérhető)
+3. **Google gemini-flash-latest** — fallback 2 (ha mindkettő nem elérhető)
 
-Az OETP ügyfélszolgálati kérdések ~60-70%-a egyszerű ténykérdés, ezért a cascade routing **5-10x költségcsökkentést** eredményez a naiv "mindig a legerősebb modell" megközelítéshez képest.
+GPT-5.x modellek `max_completion_tokens` paramétert használnak (nem `max_tokens`).
+
+A `GET /llm/health` endpoint teszteli mind a 3 providert és 503-at ad ha **egyik sem** elérhető.
 
 ---
 
-*Készítette: Bob — 2026-02-12 | Frissítve: 2026-04-05 (reasoning memory, OETP DB, eval framework)*
+*Készítette: Bob — 2026-02-12 | Frissítve: 2026-04-05 (önálló működés, multi-provider LLM, gpt-5.4-mini, reasoning memory, OETP DB)*
