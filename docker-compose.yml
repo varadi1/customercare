@@ -15,7 +15,7 @@ services:
     volumes:
       - ./data/documents:/app/documents
       - ./data:/app/data
-      - /Users/varadiimre/obsidian-git-backup:/app/obsidian-vault:rw
+      # Obsidian vault mount removed — now served by obsidian-rag :8115
       - ./backend/scripts:/app/scripts:ro
       - ../scripts:/app/crossrag_scripts:ro
     environment:

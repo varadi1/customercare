@@ -1,1 +1,0 @@
-"""Obsidian module for RAG ingestion and search."""
