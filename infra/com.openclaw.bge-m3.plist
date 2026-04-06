@@ -6,11 +6,11 @@
     <string>com.openclaw.bge-m3</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/varadiimre/.openclaw/jogszabaly-rag/bge_m3_service/.venv/bin/python</string>
-        <string>/Users/varadiimre/.openclaw/jogszabaly-rag/bge_m3_service/app.py</string>
+        <string>/Users/varadiimre/DEV/local_llm/bge_m3/.venv/bin/python</string>
+        <string>/Users/varadiimre/DEV/local_llm/bge_m3/app.py</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/varadiimre/.openclaw/jogszabaly-rag/bge_m3_service</string>
+    <string>/Users/varadiimre/DEV/local_llm/bge_m3</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

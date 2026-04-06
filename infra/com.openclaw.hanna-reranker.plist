@@ -7,7 +7,7 @@
     
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/varadiimre/.venv/reranker/bin/python</string>
+        <string>/Users/varadiimre/DEV/local_llm/reranker/.venv/bin/python</string>
         <string>-m</string>
         <string>uvicorn</string>
         <string>main:app</string>
@@ -18,7 +18,7 @@
     </array>
     
     <key>WorkingDirectory</key>
-    <string>/Users/varadiimre/DEV/hanna/reranker-service</string>
+    <string>/Users/varadiimre/DEV/local_llm/reranker</string>
     
     <key>RunAtLoad</key>
     <true/>
