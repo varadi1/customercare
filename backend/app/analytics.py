@@ -24,7 +24,9 @@ TOPIC_KEYWORDS = {
     "Műszaki kérdés": ["napelem", "akkumulátor", "tároló", "műszaki"],
 }
 
-OBSIDIAN_REPORT_DIR = Path("/app/obsidian-vault/areas/hanna-reports")
+from .config import settings
+
+REPORT_DIR = Path(settings.report_dir)
 
 
 def _classify_topic(text: str) -> list[str]:
@@ -165,12 +167,12 @@ def generate_weekly_report(weeks: int = 1) -> dict:
 
     md_content = "\n".join(lines)
 
-    # Save to Obsidian vault
+    # Save report
     saved_path = None
     try:
-        OBSIDIAN_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        REPORT_DIR.mkdir(parents=True, exist_ok=True)
         filename = f"heti-riport-{now.strftime('%Y-%m-%d')}.md"
-        report_path = OBSIDIAN_REPORT_DIR / filename
+        report_path = REPORT_DIR / filename
         report_path.write_text(md_content, encoding="utf-8")
         saved_path = str(report_path)
     except Exception as e:

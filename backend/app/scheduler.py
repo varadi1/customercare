@@ -196,8 +196,9 @@ async def _run_weekly_report():
         if report.get("status") != "no_data":
             md = format_obsidian_report(report)
             date_str = datetime.now(timezone.utc).strftime("%y%m%d")
-            reports_dir = Path("/app/data/reports")
-            reports_dir.mkdir(exist_ok=True)
+            from .config import settings
+            reports_dir = Path(settings.report_dir)
+            reports_dir.mkdir(parents=True, exist_ok=True)
             (reports_dir / f"{date_str}-knowledge-gaps.md").write_text(md, encoding="utf-8")
             logger.info("Scheduler: gap report saved")
 

@@ -15,7 +15,7 @@ services:
     volumes:
       - ./data/documents:/app/documents
       - ./data:/app/data
-      # Obsidian vault mount removed — now served by obsidian-rag :8115
+      - ${REPORT_DIR:-./data/reports}:/app/reports
       - ./backend/scripts:/app/scripts:ro
       - ../scripts:/app/crossrag_scripts:ro
     environment:
@@ -38,6 +38,7 @@ services:
       - OETP_DB_USER=${OETP_DB_USER:-tarolo_readonly}
       - OETP_DB_PASSWORD=${OETP_DB_PASSWORD}
       - OETP_DB_ENABLED=${OETP_DB_ENABLED:-false}
+      - REPORT_DIR=/app/reports
       - AUTO_PROCESS_ENABLED=${AUTO_PROCESS_ENABLED:-false}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}

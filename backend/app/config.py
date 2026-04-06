@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     discord_bot_token: str = ""        # Bot token (alternative to webhook)
     discord_channel_id: str = ""       # Channel ID for bot messages
 
+    # Report output directory (Obsidian !reports or any writable path)
+    report_dir: str = "/app/data/reports"
+
     # Autonomous processing
     auto_process_enabled: bool = False  # Feature flag for autonomous email processing
 
