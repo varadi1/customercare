@@ -423,7 +423,7 @@ chunks (
 
 HNSW index a vector kereséshez, GIN index a tsvector-hoz.
 
-### PostgreSQL séma (Obsidian — `neu_docs` DB)
+### PostgreSQL séma (Obsidian — `obsidian_rag` DB)
 
 ```sql
 obsidian_chunks (
@@ -778,7 +778,7 @@ Hanna az **OpenClaw** 5 rendszeres RAG ökoszisztéma egyik tagja:
 | **Hanna OETP** | `hanna_oetp` | OETP pályázat, emailek, GYIK | ~10,000 |
 | **Jogszabály RAG** | `jogszabaly_rag` | Magyar jogszabályok (Kbt, Étv, Ptk, EU) | ~95,000 |
 | **NEÜ Docs** | `neu_docs` | Céges dokumentumok, szerződések | ~48,000 |
-| **Obsidian RAG** | `neu_docs` | Személyes tudásbázis (PARA vault) | ~23,000 |
+| **Obsidian RAG** | `obsidian_rag` | Személyes tudásbázis (PARA vault) | ~32,000 |
 | **UAE Legal RAG** | `uae_legal_rag` | Emirátusi jogszabályok | ~18,000 |
 
 A **Cross-RAG** rendszer entitás-szinten összeköti az 5 rendszert: ha egy fogalom (pl. "közbeszerzés") megjelenik a Hanna OETP tudásbázisban és a jogszabály RAG-ban is, az entitás mindkét helyről elérhető.
