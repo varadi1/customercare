@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.hanna-reranker</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/varadiimre/.venv/reranker/bin/python</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8102</string>
+    </array>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/varadiimre/DEV/hanna/reranker-service</string>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <true/>
+    
+    <key>StandardOutPath</key>
+    <string>/tmp/hanna-reranker.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/tmp/hanna-reranker.log</string>
+</dict>
+</plist>
