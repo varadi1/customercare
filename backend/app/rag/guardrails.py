@@ -251,6 +251,32 @@ def _check_forbidden_phrases(plain: str) -> list[dict]:
                 "severity": "medium",
                 "detail": reason,
             })
+
+    # AI-speak detection — phrases that reveal LLM origin
+    ai_speak = [
+        "rendelkezésre álló tények",
+        "rendelkezésre álló ellenőrzött",
+        "megadott tények alapján",
+        "ellenőrzött tények",
+        "forrás-chunk",
+        "nem szerepel információ",
+        "nem tartalmaz információt",
+        "nem adnak választ",
+        "nem adnak egyértelmű választ",
+        "a tények alapján",
+        "a tények nem",
+        "kollégánk hamarosan válaszol",
+    ]
+    plain_lower = plain.lower()
+    for phrase in ai_speak:
+        if phrase in plain_lower:
+            warnings.append({
+                "rule": "ai_speak",
+                "severity": "high",
+                "detail": f"AI-speak detektálva: '{phrase}'",
+            })
+            break  # One is enough to flag
+
     return warnings
 
 
