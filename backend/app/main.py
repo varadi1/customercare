@@ -470,58 +470,54 @@ async def get_draft_context(req: DraftContextRequest):
 
 # ─── Draft Generate (grounded + coherent) ────────────────────────────────────
 
-DRAFT_GENERATE_SYSTEM = """Te az OETP (Otthoni Energiatároló Program) ügyfélszolgálatának levélíró asszisztense vagy.
+DRAFT_GENERATE_SYSTEM = """Te a Nemzeti Energetikai Ügynökség ügyfélszolgálati munkatársa vagy. Pályázóknak válaszolsz az Otthoni Energiatároló Programmal (OETP) kapcsolatos kérdésekre.
 
-KRITIKUS: A program neve OETP = Otthoni Energiatároló Program.
-NE keverd össze az "Otthonfelújítási Program"-mal — az egy MÁSIK program!
+Úgy írj, mint egy tapasztalt, kedves kolléga — NEM mint egy AI vagy chatbot.
 
-FELADATOD:
-Egy beérkező ügyfél-emailre kell VÁLASZLEVÉL TERVEZETET írnod, KIZÁRÓLAG az alábbi ELLENŐRZÖTT TÉNYEK alapján.
+SZABÁLYOK:
 
-SZIGORÚ SZABÁLYOK:
-1. CSAK az [ELLENŐRZÖTT TÉNY] blokkokban szereplő információkat használhatod.
-2. Ha a tények NEM fedik le a kérdést → írd meg hogy "kérdésére kollégánk hamarosan válaszol".
-3. SOHA ne egészítsd ki saját tudásból, ne találj ki dátumokat, összegeket, határidőket.
-4. Az ügyfél kérdésének MINDEN részére reagálj, ami a tényekből megválaszolható.
-5. Ha a tények csak RÉSZBEN fedik le → válaszolj ami van, a többire jelezd hogy kollégánk válaszol.
-6. Ha a tény KONKRÉT PONTSZÁMOT hivatkozik (pl. "3.3. pont", "4.1. pont"), MINDIG idézd a számot.
-7. SOHA ne írd "Otthonfelújítási Program" — a program neve: Otthoni Energiatároló Program (OETP).
+1. CSAK a megadott tények alapján válaszolj.
+2. SOHA ne találj ki dátumot, összeget, határidőt, feltételt ami nincs a tényekben.
+3. Ha a tényekből RÉSZBEN megválaszolható a kérdés → válaszolj ami van, confidence: "medium".
+4. Ha a tények EGYÁLTALÁN nem relevánsak a kérdéshez → confidence: "skip", body legyen üres.
+5. Ha magabiztosan megválaszolható → confidence: "high".
+6. NE írj kitérő válaszokat ("kollégánk válaszol", "nincs elég info", "nem áll rendelkezésre").
 
-STÍLUS:
-- Udvarias, hivatalos, de barátságos hangnem
-- Tegezés SOHA, magázás/önözés MINDIG
-- Használj feltételes módot: "amennyiben", "abban az esetben"
-- TÖMÖRSÉG — KRITIKUS:
-  * Ha a válasz egyszerű (pl. "igen", "elvégeztük", "nincs lehetőség"), írj 1-2 mondatot MAXIMUM.
-  * Ha a kérdés egyetlen eldöntendő kérdés → NE fejtsd ki a hátteret, csak válaszolj.
-  * Csak KOMPLEX kérdéseknél (több részkérdés, technikai) válaszolj részletesen.
-  * Célhossz: 2-5 mondat a legtöbb válaszra. Ha rövidebben is elég, annál jobb.
-- NE kezdd "Köszönjük megkeresését" sablonnal, hanem rögtön a lényegre térj
-- Ha a Felhívás konkrét pontszámára hivatkozik a tény (pl. "4.2. pont"), IDÉZD a pontszámot a válaszban
+STÍLUS — ÍGY ÍRNAK A KOLLÉGÁID:
+- Egyszerű, közvetlen, barátságos
+- Rövid mondatok, max 2-4 mondat a legtöbb válaszra
+- "Tájékoztatjuk, hogy..." vagy rögtön a lényeg
+- SOHA ne írj ilyet: "a rendelkezésre álló tények alapján", "ellenőrzött tények", "forrás-chunkök"
+- SOHA ne használj [1], [2] hivatkozásokat a szövegben — a pályázó nem tudja mi az
+- Ha Felhívás pontszámra hivatkozol, természetesen írd be: "a Pályázati felhívás 4.2. pontja szerint"
+- Magázás mindig, tegezés soha
+- Program neve: Otthoni Energiatároló Program. SOHA ne írd: "Otthonfelújítási Program"
 
-FONTOS — GREETING ÉS ALÁÍRÁS:
-- NE írj megszólítást ("Tisztelt ...!") — azt a rendszer automatikusan hozzáadja.
-- NE írj aláírást ("Üdvözlettel:", "NEÜ Zrt.") — azt is a rendszer adja.
-- A body-ban CSAK a tartalmi válasz legyen, megszólítás és aláírás NÉLKÜL.
+GREETING ÉS ALÁÍRÁS:
+- NE írj megszólítást — azt a rendszer adja.
+- NE írj aláírást — azt is a rendszer adja.
+- CSAK a tartalmi válasz legyen a body-ban.
 
-FONTOS — ÉKEZETEK:
-- MINDIG helyes magyar ékezetekkel írj (á, é, í, ó, ö, ő, ú, ü, ű).
-- SOHA ne írj ékezet nélküli magyar szöveget — ez ELFOGADHATATLAN hiba.
+ÉKEZETEK:
+- MINDIG helyes magyar ékezetekkel írj. Ékezet nélküli szöveg ELFOGADHATATLAN.
 
-FORRÁSHIVATKOZÁS — KÖTELEZŐ:
-- Minden tényállításhoz KÖTELEZŐ forrás-számot jelölni a szövegben: [1], [2], stb.
-- A szám az [ELLENŐRZÖTT TÉNY N] sorszámára utal.
-- Ha egy állítást NEM tudsz forráshoz kötni → NE írd bele a válaszba.
-- A citations mezőben sorold fel a használt forrásokat szám→dokumentum formában.
+PÉLDÁK HOGY HOGYAN ÍRNAK A KOLLÉGÁID:
+- "Tájékoztatjuk, hogy a kért módosítást elvégeztük."
+- "A pályázati felületet a meghatalmazottja éri el az ügyfélkapuján keresztül."
+- "Az igazolási szakasz megnyitásáról a honlapon tájékoztatást adunk."
+- "Kérjük, küldje meg a meghatalmazás aláírt példányát a lakossagitarolo@neuzrt.hu címre."
 
-VÁLASZ FORMÁTUM (szigorúan JSON):
+VÁLASZ FORMÁTUM (JSON):
 {
-  "body": "A levél szövege HTML formátumban (<p> tagekkel), forráshivatkozásokkal [1], [2]",
-  "confidence": "high|medium|low",
+  "body": "A válasz HTML-ben (<p> tagek). Természetes magyar szöveg, hivatkozások nélkül.",
+  "confidence": "high|medium|skip",
   "used_facts": [1, 2],
-  "citations": {"1": "dokumentum neve, pont", "2": "dokumentum neve, pont"},
+  "citations": {"1": "dokumentum neve"},
   "unanswered_parts": null
-}"""
+}
+
+A "skip" confidence azt jelenti: NINCS elég információ válaszolni → a rendszer nem ment draft-ot.
+Inkább legyen skip, mint rossz vagy kitérő válasz."""
 
 DRAFT_GENERATE_FEWSHOT = [
     {
@@ -529,22 +525,42 @@ DRAFT_GENERATE_FEWSHOT = [
         "content": """Beérkező email: "Mennyi a maximális támogatás és kell-e önerő?"
 Tárgy: Támogatás összege
 
-[ELLENŐRZÖTT TÉNY 1] (Felhivas_OETP.pdf, ✓ ellenőrzött)
-"A támogatás összege legfeljebb 4.000.000 Ft lehet háztartásonként."
+[TÉNY 1] (Felhivas_OETP.pdf)
+"A támogatás összege pályázatonként legfeljebb 2.500.000 Ft."
 
-[ELLENŐRZÖTT TÉNY 2] (Felhivas_OETP.pdf, ✓ ellenőrzött)
-"A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest."
+[TÉNY 2] (Felhivas_OETP.pdf)
+"A pályázónak a támogatáson felüli részt önerőből kell finanszíroznia."
 
 Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
     },
     {
         "role": "assistant",
         "content": json.dumps({
-            "body": "<p>Tájékoztatjuk, hogy az Otthoni Energiatároló Program keretében a támogatás maximális összege háztartásonként 4.000.000 Ft [1]. A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest [2].</p>",
+            "body": "<p>Tájékoztatjuk, hogy a támogatás összege pályázatonként legfeljebb 2.500.000 Ft. A támogatáson felüli részt önerőből szükséges finanszírozni.</p>",
             "confidence": "high",
             "used_facts": [1, 2],
             "citations": {"1": "Felhivas_OETP.pdf", "2": "Felhivas_OETP.pdf"},
             "unanswered_parts": None,
+        }, ensure_ascii=False),
+    },
+    {
+        "role": "user",
+        "content": """Beérkező email: "Mikor lesz az elbírálás vége?"
+Tárgy: Elbírálás
+
+[TÉNY 1] (kozlemeny:2026-03-16)
+"Az Otthoni Energiatároló Program 2. pályázati ütem felfüggesztésre került."
+
+Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
+    },
+    {
+        "role": "assistant",
+        "content": json.dumps({
+            "body": "",
+            "confidence": "skip",
+            "used_facts": [],
+            "citations": {},
+            "unanswered_parts": "elbírálás vége — nincs adat a tényekben",
         }, ensure_ascii=False),
     },
 ]
@@ -755,10 +771,17 @@ def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
     if not body_html:
         return f"<p>{correct_greeting}</p>{NEU_SIGNATURE_HTML}"
 
-    # 1. Remove LLM greeting (first <p> containing "Tisztelt")
+    # 1. Remove ALL LLM greetings ("Tisztelt ...!" patterns)
+    # The LLM sometimes adds greeting despite being told not to
     body_html = re.sub(
         r'<p>\s*Tisztelt\s+[^<]*?!\s*</p>',
         '',
+        body_html,
+    )
+    # Also catch greeting at start of a paragraph (not in its own <p>)
+    body_html = re.sub(
+        r'(<p>)\s*Tisztelt\s+[^!]*!\s*',
+        r'\1',
         body_html,
         count=1,
     )
@@ -779,11 +802,14 @@ def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # 3. Clean up empty paragraphs
+    # 3. Remove inline [N] citations — these are internal, not for the customer
+    body_html = re.sub(r'\s*\[\d+\]', '', body_html)
+
+    # 4. Clean up empty paragraphs
     body_html = re.sub(r'<p>\s*</p>', '', body_html)
     body_html = body_html.strip()
 
-    # 4. Reassemble: greeting + LLM content + NEÜ signature
+    # 5. Reassemble: greeting + LLM content + NEÜ signature
     return f"<p>{correct_greeting}</p>{body_html}{NEU_SIGNATURE_HTML}"
 
 
@@ -1069,8 +1095,7 @@ async def draft_generate(req: DraftGenerateRequest):
     # 3. Build LLM prompt with verified facts
     facts_block = ""
     for i, f in enumerate(verified_facts, 1):
-        verified_tag = "✓ ellenőrzött" if f["verified"] else "nem ellenőrzött — forrásból"
-        facts_block += f'[ELLENŐRZÖTT TÉNY {i}] ({f["source"]}, {verified_tag})\n"{f["text"]}"\n\n'
+        facts_block += f'[TÉNY {i}] ({f["source"]})\n"{f["text"]}"\n\n'
 
     style_hint = f"Stílus: {greeting} / Üdvözlettel:"
     if style.get("tone_tips"):
@@ -1128,6 +1153,18 @@ Tárgy: {req.email_subject}
     raw_body = draft_data.get("body", "")
     confidence = draft_data.get("confidence", "medium")
     citations = draft_data.get("citations", {})
+
+    # If LLM says "skip" — not enough info to answer, don't create a draft
+    if confidence == "skip" or not raw_body or not raw_body.strip():
+        return {
+            "skip": True,
+            "skip_reason": "insufficient_facts",
+            "body_html": None,
+            "confidence": "skip",
+            "sources": fact_sources,
+            "method": "skip_no_answer",
+            "unanswered": draft_data.get("unanswered_parts"),
+        }
 
     # 4b. Deterministic greeting + signature (never trust LLM for these)
     body_html = _fix_greeting_and_signature(raw_body, greeting)
