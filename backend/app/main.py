@@ -1334,7 +1334,26 @@ Tárgy: {req.email_subject}
         except Exception as e:
             print(f"[hanna] Alignment check failed (non-blocking): {e}")
 
-    # 8. SelfCheck — multi-sample consistency (only for medium, cost control)
+    # 8. Legal risk check — verify eligibility claims against legal RAG
+    legal_check_result = None
+    if confidence != "skip":
+        try:
+            from .rag.legal_check import check_legal_risk
+            _draft_plain = re.sub(r"<[^>]+>", "", body_html)
+            legal_check_result = await check_legal_risk(
+                draft_text=_draft_plain,
+                email_text=req.email_text,
+                oetp_ids=req.oetp_ids,
+            )
+            if legal_check_result.get("risk_level") == "high":
+                confidence = "low"
+                print(f"[hanna] ⚖️ LEGAL RISK: {legal_check_result['recommendation']}")
+            elif legal_check_result.get("has_legal_claims"):
+                print(f"[hanna] Legal claims detected: {legal_check_result['claims_found'][:3]}")
+        except Exception as e:
+            print(f"[hanna] Legal check failed (non-blocking): {e}")
+
+    # 9. SelfCheck — multi-sample consistency (only for medium, cost control)
     selfcheck_result = None
     if confidence == "medium":
         try:
@@ -1374,6 +1393,7 @@ Tárgy: {req.email_subject}
         "cove_verification": cove_result,
         "selfcheck": selfcheck_result,
         "alignment": alignment_result,
+        "legal_check": legal_check_result,
         "reference_check": ref_check,
         "radix_data": ctx.get("radix_data") or None,
         "suggested_confidence": ctx.get("suggested_confidence"),
