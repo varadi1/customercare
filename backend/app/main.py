@@ -647,24 +647,50 @@ def _strip_enrichment_prefix(text: str) -> str:
     return text.strip()
 
 
-def _build_greeting(sender_name: str = "", category: str = "", email_body: str = "") -> str:
+def _build_greeting(
+    sender_name: str = "",
+    category: str = "",
+    email_body: str = "",
+    oetp_data: dict | None = None,
+    sender_email: str = "",
+) -> str:
     """Build appropriate greeting.
 
     Priority:
-    1. Name from email body signature (most reliable — customer wrote it)
-    2. Graph API sender_name (if it's a person name, not company)
-    3. Category-based: "Tisztelt Érdeklődő!"
-    4. Default: "Tisztelt Pályázó!"
+    1. OETP DB name (most reliable: pályázó or meghatalmazott matched by email)
+    2. Name from email body signature
+    3. Graph API sender_name (if it's a person name, not company)
+    4. "Tisztelt Pályázó!" (if OETP-ID present but no name resolved)
+    5. "Tisztelt Érdeklődő!" (no OETP-ID at all)
     """
     from .email.name_extractor import extract_name_from_body, is_company_name
 
-    # Priority 1: Try email body signature
+    has_oetp_id = bool(oetp_data and oetp_data.get("applications"))
+
+    # Priority 1: OETP DB — match sender email to applicant or representative
+    if has_oetp_id and sender_email:
+        sender_lower = sender_email.strip().lower()
+        for app in oetp_data.get("applications", []):
+            applicant_email = (app.get("palyazo_email") or "").strip().lower()
+            representative_email = (app.get("megbizott_email") or "").strip().lower()
+            if sender_lower == representative_email and app.get("meghatalmazott_neve"):
+                name = _normalize_hungarian_name(app["meghatalmazott_neve"])
+                return f"Tisztelt {name}!"
+            if sender_lower == applicant_email and app.get("palyazo_neve"):
+                name = _normalize_hungarian_name(app["palyazo_neve"])
+                return f"Tisztelt {name}!"
+            # No email match — try applicant name as fallback (they have the OETP-ID)
+            if app.get("palyazo_neve"):
+                name = _normalize_hungarian_name(app["palyazo_neve"])
+                return f"Tisztelt {name}!"
+
+    # Priority 2: Try email body signature
     if email_body:
         body_name = extract_name_from_body(email_body)
         if body_name:
             return f"Tisztelt {body_name}!"
 
-    # Priority 2: Graph API sender_name (if person, not company)
+    # Priority 3: Graph API sender_name (if person, not company)
     skip_names = {"", "null", "none", "info", "admin", "support"}
     name = (sender_name or "").strip()
 
@@ -681,11 +707,11 @@ def _build_greeting(sender_name: str = "", category: str = "", email_body: str =
             name = _normalize_hungarian_name(name)
             return f"Tisztelt {name}!"
 
-    # Priority 3: Category-based
-    if category in ("altalanos", "hatarido"):
-        return "Tisztelt Érdeklődő!"
+    # Priority 4/5: OETP-ID present → "Pályázó", otherwise → "Érdeklődő"
+    if has_oetp_id:
+        return "Tisztelt Pályázó!"
 
-    return "Tisztelt Pályázó!"
+    return "Tisztelt Érdeklődő!"
 
 
 def _normalize_hungarian_name(name: str) -> str:
@@ -1108,8 +1134,22 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
     # Langfuse: log search results
     lf_trace.search(rag_results, req.email_text[:200])
 
-    # Smart greeting: personalized if sender name available, else category-based
-    greeting = _build_greeting(req.sender_name, ctx.get("category", ""), req.email_text)
+    # Fetch OETP applicant data EARLY — needed for greeting + LLM context
+    _oetp_data = {}
+    try:
+        from app.reasoning.radix_client import enrich_draft_context
+        _oetp_data = await enrich_draft_context(oetp_ids=req.oetp_ids, sender_email=req.sender_email)
+    except Exception:
+        pass
+
+    # Smart greeting: OETP DB name > email body signature > Graph API > category-based
+    greeting = _build_greeting(
+        sender_name=req.sender_name,
+        category=ctx.get("category", ""),
+        email_body=req.email_text,
+        oetp_data=_oetp_data,
+        sender_email=req.sender_email,
+    )
 
     if not rag_results:
         return {
@@ -1220,14 +1260,13 @@ Tárgy: {req.email_subject}
 
 {style_hint}"""
 
-    # 3b. OETP applicant data (if available and OETP-ID in email)
+    # 3b. OETP applicant data (already fetched above for greeting)
     try:
-        from app.reasoning.radix_client import enrich_draft_context, format_applicant_context
-        oetp_data = await enrich_draft_context(oetp_ids=req.oetp_ids, sender_email=req.sender_email)
-        if oetp_data:
-            for app in oetp_data.get("applications", []):
+        from app.reasoning.radix_client import format_applicant_context
+        if _oetp_data:
+            for app in _oetp_data.get("applications", []):
                 user_msg += "\n\n" + format_applicant_context(app, sender_email=req.sender_email)
-            for app in oetp_data.get("sender_applications", []):
+            for app in _oetp_data.get("sender_applications", []):
                 user_msg += "\n\n" + format_applicant_context(app, sender_email=req.sender_email)
     except Exception:
         pass
