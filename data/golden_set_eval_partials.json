@@ -1,0 +1,131 @@
+[
+  {
+    "question": "A mai napon emailt kaptam arról hogy a lakossági energiatárolási pályázaton nyertem. Szeretném a vállalkozókkal felvenni a kapcsolatot a hivatkozott ürlapon keresztül. Ehhez kérem a segítségüket hogy hogyan érem el a pályázati portált.",
+    "expected_answer": "Tisztelt Pályázó! Ön meghatalmazotton keresztül nyújtotta be a pályázatát, így a pályázati felületet ő éri el. Kérjük, vegye fel a kapcsolatot meghatalmazottjával.",
+    "subject": "Pályázati portál elérhetőség"
+  },
+  {
+    "question": "Sikeres pályázó vagyok. Mikor indul az igazolási szakasz és milyen dokumentumokat kell majd benyújtani?",
+    "expected_answer": "Tisztelt Pályázó! Az igazolási szakasz kezdetéről nincs közzétéve pontos dátum, erről a honlapon, illetve értesítés formájában adunk tájékoztatást.",
+    "subject": "Igazolási szakasz"
+  },
+  {
+    "question": "Nyertes pályázatom van, de nem tudom hogyan válasszak kivitelezőt. Mi a következő lépés?",
+    "expected_answer": "Tisztelt Pályázó! A kivitelezőknek most még csak kapcsolattartási űrlapot küldhet, akik keresni fogják árajánlatokkal. Ez még nem jelent elköteleződést, a kivitelező választás majd az igazolási szakaszban történik.",
+    "subject": "Kivitelező választás"
+  },
+  {
+    "question": "Hálózatpárhuzamos és szigetüzemmódban használt hibrid inverterrel szeretnék pályázni. Lehetséges ez?",
+    "expected_answer": "Tisztelt Érdeklődő! A Felhívás 3.3. pontja szerint nem nyújtható támogatás szigetüzemű rendszer kialakítására, továbbfejlesztésére.",
+    "subject": "Szigetüzem támogathatóság"
+  },
+  {
+    "question": "A meglévő inverterem cseréje szükséges az energiatároló telepítéséhez. Ez jár-e a szaldó elszámolás elvesztésével?",
+    "expected_answer": "A beavatkozás nem jár a betáplálásra rendelkezésre álló teljesítmény módosításával, viszont módosul a hálózathasználati szerződés. Ettől függetlenül az elszámolási mód – szaldó – változatlan marad.",
+    "subject": "Inverter csere és szaldó"
+  },
+  {
+    "question": "Pályázóként szeretnék meghatalmazottat kijelölni. Van sablon a meghatalmazáshoz?",
+    "expected_answer": "Nincs sablon nyomtatványunk, ám a meghatalmazás sablont át lehet írni a visszavonásra vonatkozóan is.",
+    "subject": "Meghatalmazás sablon"
+  },
+  {
+    "question": "A pályázatomban hibás adatot adtam meg. Kérhetem a javítását?",
+    "expected_answer": "Tisztelt Pályázó! A kedvezményezettet átírni nem áll módunkban. A Felhívás 4.1. pontja szerint a pályázó kizárólag természetes személy lehet.",
+    "subject": "Adatjavítás kérése"
+  },
+  {
+    "question": "Milyen célterületekre igényelhető támogatás az OETP keretében és milyen inverter kérdések vannak?",
+    "expected_answer": "Jelen Felhívás keretében kizárólag az alábbi két célterület egyikére igényelhető támogatás: 1. célterület: Új háztartási méretű kiserőmű napelemes rendszer kiépítése tárolóval, 2. célterület: Meglévő rendszer bővítése tárolóval.",
+    "subject": "Célterületek és inverter"
+  },
+  {
+    "question": "Az igazolási szakaszban milyen dokumentumok szükségesek?",
+    "expected_answer": "Az igazolási szakaszban csatolandó dokumentumok listáját a Pályázati Felhívás 10.2.5. pontja tartalmazza. A mellékletek és sablondokumentumok még nem jelentek meg a pályázati oldalon.",
+    "subject": "Igazolási dokumentumok"
+  },
+  {
+    "question": "Én is pályázhattam volna, de a Napenergia Plusz Programban nyertem korábban. Van kizáró ok?",
+    "expected_answer": "A Pályázati Felhívás 4.2. pontja szerint nem nyújtható támogatás olyan természetes személynek, aki a Napenergia Plusz Program keretében a beruházás helyszínére vonatkozóan támogatásban részesült.",
+    "subject": "NPP kizáró ok"
+  },
+  {
+    "question": "Kiválasztottam 3 kivitelezőt a listáról. Egyikük azt jelezte vissza, hogy a meglévő rendszerem márkáját nem ismeri, így nem tud ajánlatot adni. Megkereshetek egy 4. vállalkozót?",
+    "expected_answer": "A pályázati rendszerben legfeljebb 3 kivitelezőnek küldhet kapcsolatfelvételi űrlapot. Amennyiben valamelyik nem tud ajánlatot adni, sajnos a rendszer nem teszi lehetővé további kivitelező megkeresését.",
+    "subject": "Kivitelező csere - 4. megkeresés"
+  },
+  {
+    "question": "A felhívás 10.2.4 pontjában foglaltak szerint kell beküldeni a dokumentumokat. De ez a pont a felhívás módosításakor törlésre került. Most mi a teendő?",
+    "expected_answer": "",
+    "subject": "10.2.4 pont törlés - teendők",
+    "expected_skip": true
+  },
+  {
+    "question": "Van egy egyéni vállalkozásom a lakcímemen bejegyezve. Pályázhatok az Otthoni Energiatároló Programra?",
+    "expected_answer": "A Pályázati felhívás 4.2. pontja szerint a beruházással érintett lakóingatlanban vállalkozás kizárólag adminisztratív székhelye, telephelye, fióktelepe lehet bejelentve. Amennyiben az egyéni vállalkozói tevékenységét nem a lakóhelyén végzi, pályázhat.",
+    "subject": "Gazdasági tevékenység - EV"
+  },
+  {
+    "question": "A meghatalmazottam nem tudja tovább intézni a pályázatomat. Hogyan tudom visszavonni a meghatalmazást és új meghatalmazottat kijelölni?",
+    "expected_answer": "A korábban adott meghatalmazást egyoldalú jognyilatkozat formájában vonhatja vissza. Az új meghatalmazott kijelöléséhez kérjük küldje meg a lakossagitarolo@neuzrt.hu címre az új eljáró személy egyedi azonosítóját, elérhetőségi adatait és a kitöltött meghatalmazást.",
+    "subject": "Meghatalmazás visszavonás és csere"
+  },
+  {
+    "question": "Mikor lesz kész az elbírálás? Mikor kapom meg az eredményt?",
+    "expected_answer": "",
+    "subject": "Elbírálás időpontja",
+    "expected_skip": true
+  },
+  {
+    "question": "A pályázati portálon nem tudom elérni az értesítési központot. Hol találom?",
+    "expected_answer": "Amennyiben a pályázatot meghatalmazott útján nyújtotta be, a pályázati felületet kizárólag a meghatalmazottja éri el. Kérjük, vegye fel a kapcsolatot meghatalmazottjával.",
+    "subject": "Értesítési központ elérése"
+  },
+  {
+    "question": "Kötelező 3 kivitelezővel felvenni a kapcsolatot, vagy elég 1 is?",
+    "expected_answer": "Nem kötelező három kivitelezőt megkeresni. A pályázati rendszerben legfeljebb 3 kivitelezőnek küldhet kapcsolatfelvételi űrlapot, de egy kivitelező is elegendő.",
+    "subject": "Kivitelező szám - kötelező?"
+  },
+  {
+    "question": "A 2. célterület esetében milyen inverter teljesítmény engedélyezett?",
+    "expected_answer": "A 2. célterület esetében az inverter maximális teljesítménye a pályázatban megjelölt POD-ra vonatkozó hatályos csatlakozási szerződésben lévő teljesítménye lehet, felfelé legfeljebb 1 kW műszaki tűréshatárral.",
+    "subject": "Inverter teljesítmény - 2. célterület"
+  },
+  {
+    "question": "A bruttó elszámolás érvényessége lejár a projekt ideje alatt. Ez probléma?",
+    "expected_answer": "A szaldó elszámolás igazolását a Támogató (NEÜ Zrt.) végzi el a megadott POD szám és felhasználási hely alapján. Az elosztói engedélyes által kibocsátott igazolás nem szükséges.",
+    "subject": "Bruttó/szaldó elszámolás érvényesség"
+  },
+  {
+    "question": "Társasházban lakom, 8 lakásos. Pályázhatok?",
+    "expected_answer": "Sajnos nem. A Pályázati felhívás 4.2. pontja szerint a beruházással érintett lakóingatlan 6 lakásosnál nem több lakással rendelkező társasházban kell hogy található legyen.",
+    "subject": "Társasház - 8 lakásos"
+  },
+  {
+    "question": "Az Otthonfelújítási Programról szeretnék érdeklődni.",
+    "expected_answer": "",
+    "subject": "Otthonfelújítási Program - nem OETP",
+    "expected_skip": true
+  },
+  {
+    "question": "A pályázatomat visszavontam levelemben. Miért kaptam mégis értesítést?",
+    "expected_answer": "A pályázatot a pályázati felületen szükséges visszavonni.",
+    "subject": "Pályázat visszavonás"
+  },
+  {
+    "question": "Nyertes pályázóként hogyan tudom elérni a támogatási okiratot?",
+    "expected_answer": "",
+    "subject": "Támogatási okirat elérése",
+    "expected_skip": true
+  },
+  {
+    "question": "Az egyházi jogi személy tulajdonában lévő lakóingatlanban lakom. Pályázhatok?",
+    "expected_answer": "Igen. A Pályázati felhívás 1. számú módosítása szerint olyan természetes személy is pályázhat, aki 551, 552, 555 GFO kódú egyházi jogi személy tulajdonában lévő, lakhatási célú lakóingatlanban életvitelszerűen lakik, és az egyházi jogi személy tulajdonosi hozzájáruló nyilatkozatot ad.",
+    "subject": "Egyházi ingatlan - pályázhatóság"
+  },
+  {
+    "question": "A pályázat felfüggesztve van? Mikor lehet újra beadni?",
+    "expected_answer": "Az Otthoni Energiatároló Program 2. pályázati ütem felfüggesztésre került. A felfüggesztés visszavonásáig további új pályázatok benyújtására nincs lehetőség.",
+    "subject": "Pályázat felfüggesztés"
+  }
+]

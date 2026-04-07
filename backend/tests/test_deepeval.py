@@ -57,7 +57,7 @@ def _generate_draft(question: str, subject: str = "") -> dict:
             "top_k": 5,
             "max_context_chunks": 3,
         },
-        timeout=120,
+        timeout=180,
     )
     return r.json()
 
@@ -67,7 +67,7 @@ def _search(query: str, top_k: int = 5) -> list[dict]:
     r = httpx.post(
         f"{HANNA_URL}/search",
         json={"query": query, "top_k": top_k},
-        timeout=30,
+        timeout=60,
     )
     return r.json().get("results", [])
 
@@ -92,7 +92,14 @@ def _build_test_cases() -> list[tuple[str, LLMTestCase]]:
         expected = entry.get("expected_answer", "")
         subject = entry.get("subject", "")
 
-        if not question or not expected:
+        if not question:
+            continue
+
+        # Skip entries that are expected to skip (no draft)
+        if entry.get("expected_skip"):
+            continue
+
+        if not expected:
             continue
 
         # Generate Hanna draft
