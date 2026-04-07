@@ -358,6 +358,8 @@ def _needs_legal_context(category: str, email_text: str, rag_results: list) -> d
         "jogszabály", "rendelet", "törvény", "közlemény",
         "adózás", "áfa", "szja", "társasági adó",
         "örökl", "haszonélvez", "tulajdonjog", "végrehajtás",
+        "összeférhetetlenség", "tulajdonrész", "érdekeltség", "érintettség",
+        "kizáró ok", "felszámolás", "csődeljárás",
     ]
 
     matched_keywords = [kw for kw in legal_keywords if kw in text_lower]
