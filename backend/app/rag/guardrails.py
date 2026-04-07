@@ -22,6 +22,8 @@ def run_all_guardrails(
     verified_facts: list[dict],
     top_chunks: list[dict],
     email_oetp_ids: list[str] | None = None,
+    email_text: str = "",
+    citations: dict | None = None,
 ) -> dict:
     """Run all domain guardrails and return aggregated results.
 
@@ -51,6 +53,13 @@ def run_all_guardrails(
 
     # 5. Forbidden phrases
     warnings.extend(_check_forbidden_phrases(plain))
+
+    # 6. Provenance grounding
+    warnings.extend(check_provenance(body_html, citations or {}))
+
+    # 7. Response completeness
+    if email_text:
+        warnings.extend(check_completeness(email_text, body_html))
 
     # Determine suggested confidence
     high_severity = [w for w in warnings if w["severity"] == "high"]
@@ -242,4 +251,70 @@ def _check_forbidden_phrases(plain: str) -> list[dict]:
                 "severity": "medium",
                 "detail": reason,
             })
+    return warnings
+
+
+# ── 6. Provenance grounding — every paragraph must trace to a source ──
+
+def check_provenance(body_html: str, citations: dict) -> list[dict]:
+    """Check that substantive paragraphs have source citations.
+
+    A paragraph with factual claims but no [N] citation is ungrounded.
+    """
+    warnings = []
+    plain = BeautifulSoup(body_html, "html.parser").get_text() if body_html else ""
+
+    # Split into paragraphs
+    paragraphs = [p.strip() for p in plain.split("\n") if len(p.strip()) > 30]
+
+    # Filter out greeting, closing, and deferral phrases
+    skip_patterns = ["tisztelt", "üdvözlettel", "nemzeti energetikai", "montevideo",
+                     "kollégánk", "kérdésére", "1037"]
+    content_paras = [
+        p for p in paragraphs
+        if not any(s in p.lower() for s in skip_patterns)
+    ]
+
+    if not content_paras:
+        return []
+
+    uncited = [p for p in content_paras if not re.search(r"\[\d+\]", p)]
+    if uncited and len(uncited) > len(content_paras) // 2:
+        warnings.append({
+            "rule": "provenance_gap",
+            "severity": "medium",
+            "detail": f"{len(uncited)}/{len(content_paras)} tartalmi bekezdés forrás nélkül",
+        })
+
+    return warnings
+
+
+# ── 7. Response completeness — did we answer all parts of the question? ──
+
+def check_completeness(email_text: str, body_html: str) -> list[dict]:
+    """Check if the draft addresses all questions in the email.
+
+    Simple heuristic: count question marks in email, check if draft
+    has enough substance to cover them.
+    """
+    warnings = []
+    question_count = email_text.count("?")
+
+    if question_count <= 1:
+        return []  # Single question — completeness is fine
+
+    plain = BeautifulSoup(body_html, "html.parser").get_text() if body_html else ""
+    # Count substantial sentences in draft (excluding greeting/closing)
+    sentences = [s for s in re.split(r"[.!]\s+", plain)
+                 if len(s.strip()) > 20
+                 and "tisztelt" not in s.lower()
+                 and "üdvözlettel" not in s.lower()]
+
+    if len(sentences) < question_count // 2:
+        warnings.append({
+            "rule": "completeness",
+            "severity": "medium",
+            "detail": f"Email {question_count} kérdést tartalmaz, de a draft csak {len(sentences)} érdemi mondatot",
+        })
+
     return warnings

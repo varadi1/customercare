@@ -1096,12 +1096,13 @@ Tárgy: {req.email_subject}
     # 4. LLM generation — multi-provider with automatic fallback
     from .llm_client import chat_completion
 
+    messages = [
+        {"role": "system", "content": DRAFT_GENERATE_SYSTEM},
+        *DRAFT_GENERATE_FEWSHOT,
+        {"role": "user", "content": user_msg},
+    ]
+
     try:
-        messages = [
-            {"role": "system", "content": DRAFT_GENERATE_SYSTEM},
-            *DRAFT_GENERATE_FEWSHOT,
-            {"role": "user", "content": user_msg},
-        ]
         llm_result = await chat_completion(
             messages=messages,
             temperature=0.15,
@@ -1145,6 +1146,8 @@ Tárgy: {req.email_subject}
         verified_facts=verified_facts,
         top_chunks=top_chunks,
         email_oetp_ids=req.oetp_ids or None,
+        email_text=req.email_text,
+        citations=citations,
     )
     if not guardrails_result["pass"]:
         for w in guardrails_result["warnings"]:
@@ -1208,7 +1211,23 @@ Tárgy: {req.email_subject}
         except Exception as e:
             print(f"[hanna] CoVe failed (non-blocking): {e}")
 
-    # 7. Final confidence gate — "low" → route to human review
+    # 7. SelfCheck — multi-sample consistency (only for medium, cost control)
+    selfcheck_result = None
+    if confidence == "medium":
+        try:
+            from .rag.selfcheck import selfcheck
+            selfcheck_result = await selfcheck(
+                messages=messages,
+                original_response=raw_body,
+                n_samples=2,
+            )
+            if not selfcheck_result.get("consistent", True):
+                confidence = "low"
+                print(f"[hanna] SelfCheck: INCONSISTENT (min_sim={selfcheck_result['min_similarity']}) → confidence=low")
+        except Exception as e:
+            print(f"[hanna] SelfCheck failed (non-blocking): {e}")
+
+    # 8. Final confidence gate — "low" → route to human review
     draft_category = "Hanna - draft kész"
     if confidence == "low":
         draft_category = "Hanna - emberi válasz kell"
@@ -1230,6 +1249,7 @@ Tárgy: {req.email_subject}
         "citation_warnings": citation_warnings if citation_warnings.get("uncited_claims") else None,
         "guardrails": guardrails_result if not guardrails_result["pass"] else None,
         "cove_verification": cove_result,
+        "selfcheck": selfcheck_result,
         "reference_check": ref_check,
         "radix_data": ctx.get("radix_data") or None,
         "suggested_confidence": ctx.get("suggested_confidence"),
