@@ -67,28 +67,34 @@ async def chat_completion(
     """
     errors = []
 
+    import asyncio as _aio
+
     for provider in PROVIDERS:
         api_key = getattr(settings, provider["key_attr"], "")
         if not api_key:
             continue
 
-        try:
-            t0 = time.time()
-            content = await _call_provider(
-                provider, api_key, messages, temperature, max_tokens, json_mode,
-            )
-            duration_ms = int((time.time() - t0) * 1000)
+        # Retry up to 2 times per provider (with backoff)
+        for attempt in range(2):
+            try:
+                t0 = time.time()
+                content = await _call_provider(
+                    provider, api_key, messages, temperature, max_tokens, json_mode,
+                )
+                duration_ms = int((time.time() - t0) * 1000)
 
-            return {
-                "content": content,
-                "provider": provider["name"],
-                "model": provider["model"],
-                "duration_ms": duration_ms,
-            }
-        except Exception as e:
-            logger.warning("LLM provider %s failed: %s", provider["name"], e)
-            errors.append(f"{provider['name']}: {e}")
-            continue
+                return {
+                    "content": content,
+                    "provider": provider["name"],
+                    "model": provider["model"],
+                    "duration_ms": duration_ms,
+                }
+            except Exception as e:
+                logger.warning("LLM provider %s attempt %d failed: %s", provider["name"], attempt + 1, e)
+                errors.append(f"{provider['name']}[{attempt+1}]: {e}")
+                if attempt == 0:
+                    await _aio.sleep(2)  # Wait before retry
+                continue
 
     raise RuntimeError(f"All LLM providers failed: {'; '.join(errors)}")
 
