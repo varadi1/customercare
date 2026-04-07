@@ -134,6 +134,14 @@ async def _process_single_email(msg) -> dict[str, Any]:
         "status": "pending",
     }
 
+    # Step 0: Skip internal emails — no draft needed for colleague-to-colleague
+    INTERNAL_DOMAINS = {"neuzrt.hu", "nffku.hu", "nffku.onmicrosoft.com", "norvegalap.hu"}
+    sender_domain = (msg.sender_email or "").lower().split("@")[-1]
+    if sender_domain in INTERNAL_DOMAINS:
+        result["status"] = "skipped"
+        result["skip_reason"] = "internal_email"
+        return result
+
     # Step 1: Skip filter (deterministic — no LLM)
     skip_info = check_skip(msg.body_text, msg.subject)
     if skip_info["skip"]:
