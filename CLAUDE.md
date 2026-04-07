@@ -44,23 +44,25 @@ bash scripts/healthcheck_discord.sh    # Manual health check
 | **BGE-M3 Embedding** (ingest) | 8114 | — | macOS LaunchAgent, MPS GPU |
 | **BGE Reranker v2-m3** | 8102 | — | macOS LaunchAgent, MPS GPU |
 
-### Draft Generation Pipeline (13 verification layers)
+### Draft Generation Pipeline (15 verification layers)
 
 ```
 Email → Skip filter (auto-reply, internal @neuzrt.hu, thank-you)
       → RAG search + temporal staleness check
+      → Enrichment prefix strip (internal metadata removed from facts)
       → VerbatimRAG fact extraction
-      → LLM generation (Opus 4.6 primary, GPT-5.4 fallback)
+      → LLM generation (Opus 4.6 primary, GPT-5.4 fallback, 2 retries/provider)
       → "skip" confidence → no draft if insufficient info
-      → Deterministic greeting (Hungarian name order + accent fix)
+      → Deterministic greeting (email body signature > Graph API > fallback)
       → Deterministic NEÜ signature block
       → [N] citation strip (internal only, not customer-facing)
       → Citation validation (uncited claims → medium confidence)
-      → Domain guardrails (7 rules: numerical, eligibility, contradiction, forbidden phrases, AI-speak, provenance, completeness)
+      → Domain guardrails (7 rules + AI-speak detector)
       → Accent guard (accent-free → low confidence)
       → NLI faithfulness verification
       → CoVe (Chain of Verification — claim-level fact check)
       → Answer-Question Alignment (echo/irrelevant → SKIP, no draft)
+      → ⚖️ Legal risk check (eligibility claims → legal RAG verification)
       → SelfCheck (multi-sample consistency, medium conf only)
       → Final accent gate (drafts.py — blocks accent-free drafts entirely)
       → Confidence routing (low → "Hanna - emberi válasz kell")
@@ -92,13 +94,15 @@ backend/app/
 │   ├── cove.py          # Chain of Verification (claim-level fact check)
 │   ├── selfcheck.py     # Multi-sample consistency check
 │   ├── answer_alignment.py  # Echo/irrelevant detection → skip
-│   └── depersonalize.py # PII removal before RAG ingestion
+│   ├── depersonalize.py # PII removal before RAG ingestion
+│   └── legal_check.py  # Eligibility claims → legal RAG verification
 ├── email/
 │   ├── processor.py     # Autonomous pipeline: poll → filter → draft → save
 │   ├── poller.py        # Graph API inbox polling
 │   ├── drafts.py        # Outlook draft creation + final safety gate
 │   ├── skip_filter.py   # Deterministic email classification
 │   ├── history.py       # Sent items ingest (depersonalized)
+│   ├── name_extractor.py # Extract real name from email body signature
 │   └── feedback.py      # Draft vs. sent comparison loop
 ├── reasoning/
 │   ├── style_score.py   # 5-component style matching
@@ -124,7 +128,10 @@ backend/db/
 - **Opus 4.6 primary** — Best instruction following for Hungarian customer service. Fallback: GPT-5.4, then Gemini.
 - **Depersonalized RAG** — Email chunks have PII removed (names, OETP IDs, emails, phones → placeholders). Prevents name confusion and OETP ID leakage in drafts.
 - **Skip over bad draft** — If Hanna can't answer properly (echo, irrelevant, insufficient), it skips instead of generating a bad draft. Better no draft than wrong draft.
-- **Deterministic greeting + signature** — Never trust LLM for these. Hungarian name order (Family Given), accent fix from 150+ name map, full NEÜ signature block — all code-based.
+- **Deterministic greeting + signature** — Never trust LLM for these. Name extracted from email body signature first (most reliable), falls back to Graph API with Hungarian name order + accent fix. Company senders get "Tisztelt Partnerünk!". Full NEÜ signature block — all code-based.
+- **Legal risk check** — If draft makes eligibility claims (pályázhat, jogosult, támogatható), legal RAG (:8103) is consulted for contradictions. High risk → confidence=low.
+- **LLM retry** — Each provider tried twice (2s backoff) before fallback: Opus → GPT-5.4 → Gemini = 6 attempts total.
+- **LLM fail → skip** — If all providers fail, no draft created. Never dumps raw chunks as "response".
 - **Internal email skip** — Emails from @neuzrt.hu/@nffku.hu are skipped immediately (Step 0).
 - **No self-referencing** — Hanna replies FROM lakossagitarolo@neuzrt.hu, so never asks customers to "write to lakossagitarolo@neuzrt.hu".
 - **Authority hierarchy** — felhívás (1.00) > melléklet (0.95) > közlemény (0.90) > GYIK (0.85) > segédlet (0.80) > dokumentum (0.55) > email (0.40/0.30).
@@ -155,7 +162,7 @@ All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
 | OETP ID match | **100%** |
 | Semantic similarity | 0.684 |
 | Draft length ratio | ~1.7x colleague avg |
-| Verification layers | 13 |
+| Verification layers | 15 |
 | Total chunks | 1,408 |
 | Golden set entries | 25 |
 
