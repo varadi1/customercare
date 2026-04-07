@@ -903,10 +903,11 @@ async def draft_generate(req: DraftGenerateRequest):
                                 "quote": span,
                                 "verified": True,
                             })
-    except Exception:
-        pass  # VerbatimRAG unavailable — use raw chunks as fallback
+    except Exception as e:
+        print(f"[hanna] VerbatimRAG unavailable: {e}")
 
-    # Fallback: if VerbatimRAG failed, use raw chunk texts as "facts"
+    # Fallback: if VerbatimRAG failed, use raw chunk texts — but mark clearly as unverified
+    verbatim_available = bool(verified_facts)
     if not verified_facts:
         for r in top_chunks:
             text = r.get("text", "")
@@ -922,10 +923,21 @@ async def draft_generate(req: DraftGenerateRequest):
                     "verified": False,
                 })
 
+    # 2b. Program consistency check — ensure chunks are about OETP, not NPP/other
+    program_counts = {}
+    for r in top_chunks:
+        prog = r.get("category", r.get("metadata", {}).get("program", "OETP"))
+        if isinstance(r.get("metadata"), dict):
+            prog = r["metadata"].get("program", prog)
+        program_counts[prog] = program_counts.get(prog, 0) + 1
+    dominant_program = max(program_counts, key=program_counts.get) if program_counts else "OETP"
+    if dominant_program != "OETP" and program_counts.get(dominant_program, 0) > len(top_chunks) // 2:
+        print(f"[hanna] WARNING: chunks dominated by {dominant_program}, not OETP")
+
     # 3. Build LLM prompt with verified facts
     facts_block = ""
     for i, f in enumerate(verified_facts, 1):
-        verified_tag = "✓ ellenőrzött" if f["verified"] else "forrásból"
+        verified_tag = "✓ ellenőrzött" if f["verified"] else "nem ellenőrzött — forrásból"
         facts_block += f'[ELLENŐRZÖTT TÉNY {i}] ({f["source"]}, {verified_tag})\n"{f["text"]}"\n\n'
 
     style_hint = f"Stílus: {greeting} / Üdvözlettel:"
@@ -994,8 +1006,9 @@ Tárgy: {req.email_subject}
         print(f"[hanna] WARNING: accent-free draft detected, forcing low confidence")
         confidence = "low"
 
-    # 5. NLI faithfulness verification (best-effort)
+    # 5. NLI faithfulness verification
     nli_result = None
+    nli_failed = False
     try:
         chunk_texts = " ".join(f["text"] for f in verified_facts)
         nli_url = os.getenv("NLI_SERVICE_URL", "http://host.docker.internal:8107")
@@ -1008,19 +1021,38 @@ Tárgy: {req.email_subject}
                 nli_result = nli_resp.json()
                 if nli_result.get("overall_verdict") == "unfaithful":
                     confidence = "low"
-    except Exception:
-        pass
+                    print(f"[hanna] NLI: unfaithful → confidence=low")
+            else:
+                nli_failed = True
+    except Exception as e:
+        nli_failed = True
+        print(f"[hanna] NLI service unavailable: {e}")
+
+    # NLI fail + no VerbatimRAG = double-blind — downgrade confidence
+    if nli_failed and not verbatim_available:
+        if confidence == "high":
+            confidence = "medium"
+            print(f"[hanna] No NLI + no VerbatimRAG → confidence downgraded to medium")
+
+    # 6. Final confidence gate — "low" → route to human review
+    # Mark the draft category so Outlook shows it needs human attention
+    draft_category = "Hanna - draft kész"
+    if confidence == "low":
+        draft_category = "Hanna - emberi válasz kell"
 
     return {
         "skip": False,
         "body_html": body_html,
         "confidence": confidence,
+        "draft_category": draft_category,
         "sources": fact_sources,
-        "method": "verbatim+llm" if any(f["verified"] for f in verified_facts) else "chunks+llm",
+        "method": "verbatim+llm" if verbatim_available else "chunks+llm",
         "model_used": llm_model,
         "llm_provider": llm_provider,
         "facts_count": len(verified_facts),
         "nli_verification": nli_result,
+        "nli_failed": nli_failed,
+        "verbatim_available": verbatim_available,
         "reference_check": ref_check,
         "radix_data": ctx.get("radix_data") or None,
         "suggested_confidence": ctx.get("suggested_confidence"),
