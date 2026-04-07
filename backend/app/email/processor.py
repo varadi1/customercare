@@ -202,6 +202,16 @@ async def _process_single_email(msg) -> dict[str, Any]:
         return result
 
     confidence = draft_result.get("confidence", "medium")
+
+    # Step 6b: Identity guard — check OETP IDs in draft match the email
+    import re as _re
+    draft_oetp_ids = set(_re.findall(r"OETP-\d{4}-\d+", draft_result.get("body_html", "")))
+    email_oetp_ids = set(msg.oetp_ids) if msg.oetp_ids else set()
+    if draft_oetp_ids and email_oetp_ids and not (draft_oetp_ids & email_oetp_ids):
+        # Draft mentions different OETP IDs than the email — identity confusion!
+        logger.warning("Identity mismatch: draft has %s but email has %s", draft_oetp_ids, email_oetp_ids)
+        confidence = "low"
+
     result["confidence"] = confidence
 
     # Step 7: OETP DB lookup tracking

@@ -10,7 +10,32 @@ from ..config import settings
 from ..models import DraftResult
 from .auth import get_auth_headers
 
+from bs4 import BeautifulSoup
+
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+
+
+def _final_safety_check(body_html: str, confidence: str) -> str:
+    """Last-resort safety check on the draft HTML before saving to Outlook.
+
+    Catches:
+    1. Accent-free Hungarian text (should never happen after all guards)
+    2. Empty or whitespace-only body
+
+    If any issue found, replaces with a safe fallback message.
+    """
+    if not body_html or not body_html.strip():
+        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037- Budapest, Montevideo u. 14.</p>"
+
+    # Check for accent-free Hungarian text
+    plain = BeautifulSoup(body_html, "html.parser").get_text()
+    accent_chars = set("áéíóöőúüűÁÉÍÓÖŐÚÜŰ")
+
+    if len(plain) > 80 and not any(c in accent_chars for c in plain):
+        print("[drafts] BLOCKED: accent-free draft detected at final gate!")
+        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037- Budapest, Montevideo u. 14.</p>"
+
+    return body_html
 
 # Outlook categories applied to the original email after draft creation
 CATEGORY_MAP = {
@@ -115,6 +140,9 @@ async def create_reply_draft(
             "low": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="Hanna - Bizonytalan, emberi válasz javasolt">🔴</div>',
         }
         banner = confidence_icon.get(confidence, confidence_icon["medium"])
+
+        # Final safety checks before saving
+        body_html = _final_safety_check(body_html, confidence)
 
         # Ensure proper UTF-8 encoding for Hungarian characters
         meta_charset = '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">'
