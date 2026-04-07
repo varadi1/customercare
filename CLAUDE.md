@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Hanna is a multi-layer RAG (Retrieval-Augmented Generation) backend for the OETP (Otthoni Energiatároló Program — Home Energy Storage Program) customer service. Built on FastAPI, it processes incoming emails, searches a knowledge base, generates draft responses, and saves them to Outlook 365 via MS Graph API. The system prioritizes hallucination-free, source-faithful answers with 13 verification layers.
+Hanna is a multi-layer RAG (Retrieval-Augmented Generation) backend for the OETP (Otthoni Energiatároló Program — Home Energy Storage Program) customer service. Built on FastAPI, it processes incoming emails, searches a knowledge base, generates draft responses, and saves them to Outlook 365 via MS Graph API. The system prioritizes hallucination-free, source-faithful answers with 15 verification layers and a 5-level closed-loop learning system that improves from human corrections.
 
 ## Common Commands
 
@@ -73,9 +73,10 @@ Email → Skip filter (auto-reply, internal @neuzrt.hu, thank-you)
 **Database**: `hanna_oetp` (own container, init script: `backend/db/init_hanna_oetp.sql`)
 
 Tables:
-- `chunks` — RAG knowledge base (~1400 chunks, 1024-dim BGE-M3 embeddings, Hungarian tsvector)
+- `chunks` — RAG knowledge base (~1400 chunks, 1024-dim BGE-M3 embeddings, Hungarian tsvector, survival_rate)
 - `kg_entities` / `kg_relations` / `kg_entity_chunks` — Knowledge Graph
-- `reasoning_traces` — Email processing audit trail
+- `reasoning_traces` — Email processing audit trail (query → draft → sent → outcome)
+- `feedback_analytics` — Learning from draft-vs-sent differences (change_types, lesson, chunk_survival)
 - `canonical_entities` / `entity_links` — Cross-RAG sync
 
 ### Key Directories
@@ -103,11 +104,15 @@ backend/app/
 │   ├── skip_filter.py   # Deterministic email classification
 │   ├── history.py       # Sent items ingest (depersonalized)
 │   ├── name_extractor.py # Extract real name from email body signature
-│   └── feedback.py      # Draft vs. sent comparison loop
+│   └── feedback.py      # Draft vs. sent comparison loop + analytics trigger
 ├── reasoning/
 │   ├── style_score.py   # 5-component style matching
 │   ├── traces.py        # Reasoning trace storage
-│   └── authority_learner.py  # Dynamic authority adjustments
+│   ├── authority_learner.py  # Dynamic authority adjustments + chunk survival
+│   ├── authority_monitor.py  # Authority drift snapshots + Discord alerts
+│   ├── feedback_analytics.py # LLM change categorization + chunk survival tracking
+│   ├── gap_detector.py      # Missing knowledge detection from human additions
+│   └── dspy_optimizer.py    # DSPy MIPROv2 prompt optimization
 backend/scripts/
 ├── eval_live.py         # Live email eval (semantic + style + term overlap)
 ├── eval_ragas_weekly.py # RAGAS batch evaluation
@@ -115,6 +120,10 @@ backend/scripts/
 ├── bulk_ingest_sent.py  # Historical email bulk ingest by date range
 ├── ingest_subfolders.py # Inbox subfolder email ingest
 ├── scrape_nffku_oetp.py # NFFKU közlemény scraper
+├── run_dspy_optimization.py  # DSPy prompt optimization CLI
+├── build_reranker_training_data.py  # Chunk survival → reranker training pairs
+├── finetune_reranker.py     # BGE reranker fine-tuning (MPS GPU)
+├── eval_reranker.py         # Base vs fine-tuned reranker comparison
 backend/tests/
 ├── test_deepeval.py     # DeepEval: faithfulness + relevancy (25 golden set entries)
 ├── promptfoo/promptfooconfig.yaml  # Red-teaming: 12 adversarial tests
@@ -136,6 +145,46 @@ backend/db/
 - **No self-referencing** — Hanna replies FROM lakossagitarolo@neuzrt.hu, so never asks customers to "write to lakossagitarolo@neuzrt.hu".
 - **Authority hierarchy** — felhívás (1.00) > melléklet (0.95) > közlemény (0.90) > GYIK (0.85) > segédlet (0.80) > dokumentum (0.55) > email (0.40/0.30).
 
+## Learning System (5 levels)
+
+Closed-loop learning from draft-vs-sent email differences:
+
+```
+Email → Draft → Outlook → Colleague edits → Sent
+                                              ↓
+Daily 05:00 → feedback.check_feedback()
+  ├→ Match draft↔sent (conv/subject/body)
+  ├→ Resolve EXISTING trace (not duplicate)
+  ├→ L1: categorize_changes() → feedback_analytics table
+  ├→ L1: compute_chunk_survival() → which chunks survived
+  └→ L1: export_pair_to_langfuse() → DSPy training dataset
+                  ↓
+Weekly Mon 06:00 → scheduler
+  ├→ L2: authority refresh (traces → per-category adjustments → search)
+  ├→ L2: update_chunk_survival_rates (chunks.survival_rate)
+  ├→ L2: authority drift report → Discord
+  ├→ L4: gap_detector → cluster human additions → suggest missing chunks
+  └→ L4: knowledge gap report → Obsidian
+                  ↓
+Manual (monthly) → run_dspy_optimization.py
+  ├→ L3: trainset from reasoning_traces (SENT_AS_IS + SENT_MODIFIED)
+  ├→ L3: MIPROv2 optimize → system prompt + few-shot
+  └→ L3: push to Langfuse → main.py auto-picks up
+                  ↓
+Manual (quarterly) → finetune_reranker.py
+  ├→ L5: training data from chunk survival (positive/negative pairs)
+  ├→ L5: BGE reranker fine-tune (MPS GPU)
+  └→ L5: eval_reranker.py → golden set comparison
+```
+
+| Level | Component | Trigger | Data Source |
+|-------|-----------|---------|-------------|
+| L1 | `feedback_analytics.py` | Daily feedback check | LLM categorization + SequenceMatcher |
+| L2 | `authority_learner.py` + `authority_monitor.py` | Weekly scheduler | reasoning_traces outcomes |
+| L3 | `dspy_optimizer.py` | Manual CLI | 30+ draft-sent pairs from Langfuse |
+| L4 | `gap_detector.py` | Weekly scheduler | feedback_analytics.added_content |
+| L5 | `finetune_reranker.py` | Manual CLI | chunk survival positive/negative pairs |
+
 ## Configuration
 
 All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
@@ -146,11 +195,15 @@ All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
 - `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` — MS Graph API
 - `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID` — Monitoring alerts
 - `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` — Observability
+- `FEEDBACK_ANALYTICS_ENABLED` — Feedback analytics (default: true)
+- `DSPY_ENABLED` — DSPy prompt optimization (default: false)
+- `RERANKER_MODEL_PATH` — Fine-tuned reranker model path (reranker service env)
 
 ## Monitoring
 
 - **Healthcheck** (`scripts/healthcheck_discord.sh`): Every 5min via LaunchAgent, checks backend + DB + embeddings + reranker. Auto-restarts Docker containers, Discord alerts on failure/recovery.
 - **Scheduler Discord**: Every 2h processing run sends summary to Discord (📬 polled, ✅ drafts, 🟢🟡🔴 confidence).
+- **Authority drift**: Weekly authority adjustment snapshots + Discord alert on significant drift.
 - **DB data check**: Verifies chunks table is non-empty after container restart.
 
 ## Evaluation Baseline (2026-04-07)

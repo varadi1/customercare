@@ -87,9 +87,13 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   │   │   └── draft_store.py      # Draft tárolás
 │   │   ├── reasoning/
 │   │   │   ├── traces.py             # Reasoning memory: query→response→outcome traces (pgvector)
-│   │   │   ├── person_tracker.py     # Person + Organization + Application entity tracking
+│   │   │   ├── feedback_analytics.py # LLM change categorization + chunk survival + Langfuse export
+│   │   │   ├── authority_learner.py  # Dynamic authority weight learning + chunk survival rates
+│   │   │   ├── authority_monitor.py  # Authority drift snapshots + Discord alerts
+│   │   │   ├── gap_detector.py       # Missing knowledge detection (cluster human additions)
+│   │   │   ├── dspy_optimizer.py     # DSPy MIPROv2 prompt optimization module
 │   │   │   ├── knowledge_gaps.py     # Heti knowledge gap detection + Obsidian riport
-│   │   │   ├── authority_learner.py  # Dynamic authority weight learning from traces
+│   │   │   ├── person_tracker.py     # Person + Organization + Application entity tracking
 │   │   │   ├── policy_tracker.py     # Chunk supersession + validity check
 │   │   │   ├── style_score.py        # 5-component style similarity scoring
 │   │   │   ├── radix_client.py       # OETP MySQL direct query (pályázó adatok)
@@ -465,9 +469,9 @@ obsidian_chunks (
 9. **NLI verification** → faithfulness ellenőrzés
 10. **Confidence jelzés** → 🟢 high / 🟡 medium / 🔴 low ikon a draft-ban
 
-### Feedback Loop + Reasoning Memory
+### Feedback Loop + 5 szintű Tanulási Rendszer
 
-**Fájl:** `email/feedback.py`, `reasoning/traces.py`
+**Fájl:** `email/feedback.py`, `reasoning/traces.py`, `reasoning/feedback_analytics.py`
 
 A `/emails/feedback/check` endpoint összehasonlítja a Hanna által generált draft-ot a ténylegesen elküldött válasszal:
 
@@ -476,6 +480,34 @@ A `/emails/feedback/check` endpoint összehasonlítja a Hanna által generált d
 - **REJECTED** (sim < 0.30): kolléga teljesen átírta
 
 Az eredmények a `reasoning_traces` PostgreSQL táblába kerülnek (pgvector embedding-gel), és a következő hasonló kérdésnél a `draft_context.py` visszakeresi a korábbi sikeres válaszokat.
+
+#### 5 szintű zárt tanulási hurok (2026-04-07)
+
+| Szint | Komponens | Mikor fut | Mit tanul |
+|-------|-----------|-----------|-----------|
+| **L1** | `feedback_analytics.py` | Napi feedback check | LLM elemzi MIT változtatott a kolléga (hangnem? tények? struktúra?). Chunk survival tracking: melyik RAG chunk maradt a végleges emailben. Draft-sent párok Langfuse datasetbe. |
+| **L2** | `authority_learner.py` + `authority_monitor.py` | Heti scheduler | Per-kategória authority weight adjustment a trace outcome-okból. Chunk survival rate aggregálás. Heti drift snapshot + Discord alert. |
+| **L3** | `dspy_optimizer.py` | Manuális (havonta) | DSPy MIPROv2 system prompt + few-shot optimalizálás a draft-sent párokból. Langfuse prompt versioning. CLI: `run_dspy_optimization.py`. |
+| **L4** | `gap_detector.py` | Heti scheduler | Emberi hozzáadások klaszterezése → hiányzó tudásbázis témák azonosítása → chunk javaslatok. |
+| **L5** | `finetune_reranker.py` | Manuális (negyedévente) | BGE reranker fine-tuning chunk survival pozitív/negatív párokból. Eval: `eval_reranker.py`. |
+
+```
+Draft → Kolléga szerkeszt → Sent
+                              ↓
+         feedback.check_feedback() [napi 05:00]
+           ├→ categorize_changes() → feedback_analytics tábla
+           ├→ compute_chunk_survival() → chunk survival data
+           └→ export_pair_to_langfuse() → training dataset
+                        ↓
+         scheduler [heti H 06:00]
+           ├→ authority weight refresh + drift Discord
+           ├→ chunk survival rate UPDATE
+           └→ gap detector → hiányzó tudás riport
+                        ↓
+         manuális optimalizálás
+           ├→ DSPy prompt optimization (30+ pár)
+           └→ Reranker fine-tuning (50+ pár)
+```
 
 ### OETP Pályázati Adatbázis Integráció
 
@@ -559,9 +591,10 @@ Futtatás: `python3 scripts/verify_ingest.py --report`
 | Vector DB | PostgreSQL + pgvector (hanna_oetp + neu_docs DB), :5433 |
 | Embeddings | BGE-M3 (lokális, MPS GPU), :8104 (search) / :8114 (ingest) |
 | Reranker | BGE v2-m3 (lokális, MPS GPU, :8102), Cohere v3.5 fallback |
-| LLM (primary) | OpenAI gpt-5.4-mini (multi-provider, automatic fallback) |
-| LLM (fallback 1) | Anthropic claude-sonnet-4-6 |
+| LLM (primary) | Anthropic claude-opus-4-6 (multi-provider, automatic fallback) |
+| LLM (fallback 1) | OpenAI gpt-5.4 |
 | LLM (fallback 2) | Google gemini-flash-latest |
+| Prompt Optimization | DSPy MIPROv2 (gpt-4o-mini for optimization) |
 | Vision | OpenAI gpt-5.4 (csatolmány elemzés) |
 | NLI Verification | Lokális szolgáltatás, :8107 |
 | VerbatimRAG | Lokális szolgáltatás, :8108 |
@@ -584,9 +617,9 @@ Hanna **teljesen önálló rendszer** — nem függ az OpenClaw agenttől. Beép
 | Ütemezés | Feladat |
 |----------|---------|
 | Minden 2 óra | Email poll + filter + draft generálás |
-| Naponta 05:00 | Feedback check (draft vs elküldött összehasonlítás) |
+| Naponta 05:00 | Feedback check + analytics (L1: categorize, chunk survival, Langfuse export) |
 | Naponta 06:00 | Style patterns frissítés (kolléga válaszokból) |
-| Hetente (H 06:00) | Knowledge gap riport + authority weight frissítés |
+| Hetente (H 06:00) | Knowledge gap + gap detection (L4) + authority refresh (L2) + chunk survival rates + drift report |
 
 ### Discord Notifikáció
 
