@@ -504,6 +504,10 @@ FONTOS — GREETING ÉS ALÁÍRÁS:
 - NE írj aláírást ("Üdvözlettel:", "NEÜ Zrt.") — azt is a rendszer adja.
 - A body-ban CSAK a tartalmi válasz legyen, megszólítás és aláírás NÉLKÜL.
 
+FONTOS — ÉKEZETEK:
+- MINDIG helyes magyar ékezetekkel írj (á, é, í, ó, ö, ő, ú, ü, ű).
+- SOHA ne írj ékezet nélküli magyar szöveget — ez ELFOGADHATATLAN hiba.
+
 VÁLASZ FORMÁTUM (szigorúan JSON):
 {
   "body": "A levél szövege HTML formátumban (<p> tagekkel)",
@@ -981,6 +985,14 @@ Tárgy: {req.email_subject}
 
     # 4b. Deterministic greeting + signature (never trust LLM for these)
     body_html = _fix_greeting_and_signature(raw_body, greeting)
+
+    # 4c. Accent safety check — reject accent-free Hungarian drafts
+    _accent_chars = set("áéíóöőúüűÁÉÍÓÖŐÚÜŰ")
+    _plain_text = re.sub(r"<[^>]+>", "", body_html)
+    if len(_plain_text) > 80 and not any(c in _accent_chars for c in _plain_text):
+        # LLM generated accent-free text — this should never happen but guard against it
+        print(f"[hanna] WARNING: accent-free draft detected, forcing low confidence")
+        confidence = "low"
 
     # 5. NLI faithfulness verification (best-effort)
     nli_result = None
