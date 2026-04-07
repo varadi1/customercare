@@ -42,6 +42,11 @@ _SKIP_PATTERNS = [
     re.compile(r"^-{3,}"),  # Separator
     re.compile(r"^_{3,}"),
     re.compile(r"^n\s+(NAPELEM|HŐSZIVATTYÚ|PASSZÍV)", re.IGNORECASE),  # Product list
+    # Data field labels — these contain OTHER people's names, not the sender
+    re.compile(r"^(meghatalmazott|pályázó|kedvezményezett|tulajdonos|ügyvezető|kapcsolattartó|képviselő)\s*:", re.IGNORECASE),
+    re.compile(r"^(e-mailes elérhetőség|telefonos elérhetőség|egyedi azonosító|pályázati azonosító|lakcím|HRSZ|adóazonosító)\s*:", re.IGNORECASE),
+    # OETP-specific identifiers
+    re.compile(r"^(OETP|AZs|pályázat)", re.IGNORECASE),
 ]
 
 # Hungarian name pattern: 2-4 capitalized words, optionally with "né"
@@ -71,9 +76,12 @@ def extract_name_from_body(email_body: str) -> str | None:
 
     lines = email_body.strip().split("\n")
 
-    # Strategy 1: Look for "Üdvözlettel, Name" pattern
+    # Strategy 1: Look for "Üdvözlettel, Name" pattern (only in closing area)
     for line in lines[-15:]:
         stripped = line.strip()
+        # Skip data field lines
+        if any(p.match(stripped) for p in _SKIP_PATTERNS):
+            continue
         for pattern in _GREETING_PATTERNS:
             match = pattern.match(stripped)
             if match:
