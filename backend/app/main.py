@@ -589,6 +589,31 @@ Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
 ]
 
 
+def _strip_enrichment_prefix(text: str) -> str:
+    """Remove contextual enrichment prefix from chunk text.
+
+    The enrichment prefix looks like:
+    "Ez az OETP (Otthonfelújítási Program) hivatalos pályázati felhívásának részlete. Forrás: X.pdf. ..."
+    "Ez egy gyakran ismételt kérdés (GYIK) és válasz az OETP programról. Forrás: ..."
+    "Ez egy korábbi ügyfélszolgálati email válasz..."
+
+    This prefix is for embedding quality, NOT for the LLM or customer.
+    """
+    if not text:
+        return text
+    # Match known enrichment patterns at start
+    patterns = [
+        r"^Ez az OETP[^.]*\.\s*Forrás:[^.]*\.\s*[^.]*\.\s*",
+        r"^Ez egy gyakran ismételt kérdés[^.]*\.\s*Forrás:[^.]*\.\s*",
+        r"^Ez egy hivatalos közlemény[^.]*\.\s*Forrás:[^.]*\.\s*",
+        r"^Ez egy korábbi ügyfélszolgálati[^.]*\.\s*Forrás:[^.]*\.\s*[^.]*\.\s*",
+        r"^Ez az OETP pályázati felhívás hivatalos mellékletének részlete\.\s*Forrás:[^.]*\.\s*[^.]*\.\s*",
+    ]
+    for p in patterns:
+        text = re.sub(p, "", text, count=1)
+    return text.strip()
+
+
 def _build_greeting(sender_name: str = "", category: str = "") -> str:
     """Build appropriate greeting based on sender name and email category.
 
@@ -1119,7 +1144,9 @@ async def draft_generate(req: DraftGenerateRequest):
     # 3. Build LLM prompt with verified facts
     facts_block = ""
     for i, f in enumerate(verified_facts, 1):
-        facts_block += f'[TÉNY {i}] ({f["source"]})\n"{f["text"]}"\n\n'
+        # Strip enrichment prefix — it's for embedding, not for LLM/customer
+        fact_text = _strip_enrichment_prefix(f["text"])
+        facts_block += f'[TÉNY {i}] ({f["source"]})\n"{fact_text}"\n\n'
 
     style_hint = f"Stílus: {greeting} / Üdvözlettel:"
     if style.get("tone_tips"):
