@@ -1163,14 +1163,15 @@ Tárgy: {req.email_subject}
         llm_model = llm_result["model"]
         draft_data = json.loads(raw)
     except Exception as e:
-        # LLM failed — return raw facts as fallback
-        facts_html = "".join(f"<p>{f['text']}</p>" for f in verified_facts[:3])
+        # LLM failed — SKIP, never dump raw chunks as a "response"
+        print(f"[hanna] LLM FAILED: {e} — skipping draft (no raw chunk dump)")
         return {
-            "skip": False,
-            "body_html": f"<p>{greeting}</p>{facts_html}<p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség Zrt.</p>",
-            "confidence": "low",
+            "skip": True,
+            "skip_reason": f"llm_failed: {e}",
+            "body_html": None,
+            "confidence": "skip",
             "sources": fact_sources,
-            "method": "llm_fallback",
+            "method": "skip_llm_error",
             "error": str(e),
         }
 
