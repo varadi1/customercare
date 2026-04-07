@@ -625,8 +625,9 @@ def _normalize_hungarian_name(name: str) -> str:
     if all(p.isupper() for p in parts if len(p) > 1):
         parts = [p.capitalize() for p in parts]
 
-    # Contains -né suffix → already Hungarian order
-    if any("né" in p.lower() for p in parts):
+    # Contains -né suffix (e.g. Kovácsné, Győriné) → already Hungarian order
+    # Must end with "né" — not just contain it (e.g. "Németh" should NOT match)
+    if any(p.lower().endswith("né") for p in parts):
         return f"{prefix}{' '.join(parts)}"
 
     # 3+ parts → likely already Hungarian (Kovácsné Nagy Anna, or "Nagy Kiss Anna")
