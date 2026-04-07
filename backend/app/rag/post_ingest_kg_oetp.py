@@ -25,7 +25,8 @@ from typing import Optional
 
 import asyncpg
 
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+import os
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
 
 # Jogszabály regex patterns (Hungarian legal references)
 _LAW_PATTERNS = [

@@ -20,7 +20,8 @@ from .chunker import chunk_text, chunk_markdown
 from .embeddings import embed_texts_ingest as embed_texts
 from .contextual import enrich_chunk
 
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+import os
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
 
 # chunk_type → doc_type mapping (legacy ChromaDB names → PostgreSQL)
 DOC_TYPE_MAP = {

@@ -15,6 +15,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+import httpx
+
 from .config import settings
 
 logger = logging.getLogger(__name__)

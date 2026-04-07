@@ -15,6 +15,7 @@ v4 — 2026-02-27 fixes:
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
@@ -480,7 +481,7 @@ async def _sync_feedback_to_traces(details: list[dict], drafts: list[dict]) -> N
         return
 
     conn = await asyncpg.connect(
-        "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+        os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
     )
     try:
         for detail in to_sync:

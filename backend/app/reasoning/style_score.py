@@ -120,20 +120,24 @@ def _score_length(hanna: str, colleague: str) -> float:
 
 
 def _score_closing(hanna: str, colleague: str) -> float:
-    """Score closing similarity."""
-    h_has_udvozlettel = "üdvözlettel" in hanna.lower()[-200:]
-    c_has_udvozlettel = "üdvözlettel" in colleague.lower()[-200:]
+    """Score closing similarity.
 
-    h_has_neu = "nemzeti energetikai" in hanna.lower()[-200:]
-    c_has_neu = "nemzeti energetikai" in colleague.lower()[-200:]
+    Hanna always includes the NEÜ signature block (deterministic),
+    so we check if it's present and well-formed rather than comparing
+    with the colleague text (which may have the signature stripped).
+    """
+    h_lower = hanna.lower()[-300:]
+    has_udvozlettel = "üdvözlettel" in h_lower
+    has_neu = "nemzeti energetikai" in h_lower
+    has_address = "montevideo" in h_lower or "1037" in h_lower
 
-    score = 0.0
-    if h_has_udvozlettel == c_has_udvozlettel:
-        score += 0.5
-    if h_has_neu == c_has_neu:
-        score += 0.5
-
-    return score
+    if has_udvozlettel and has_neu and has_address:
+        return 1.0  # Full proper signature
+    if has_udvozlettel and has_neu:
+        return 0.8
+    if has_udvozlettel:
+        return 0.5
+    return 0.2
 
 
 def _score_formality(hanna: str, colleague: str) -> float:

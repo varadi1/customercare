@@ -25,7 +25,6 @@ sys.path.insert(0, "/app")
 
 from app.email.auth import get_auth_headers
 from app.rag.ingest import ingest_text
-from app.rag.search import get_collection
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
@@ -125,17 +124,21 @@ def fetch_folder_messages(
 
 
 def get_existing_sources() -> set[str]:
-    """Get all existing source prefixes to avoid duplicates."""
-    collection = get_collection()
-    existing = collection.get(
-        where={"chunk_type": {"$in": ["email_reply", "email_question"]}},
-        include=["metadatas"],
-    )
-    sources = set()
-    for meta in existing.get("metadatas", []):
-        src = meta.get("source", "")
-        sources.add(src)
-    return sources
+    """Get all existing source prefixes to avoid duplicates (PostgreSQL)."""
+    import asyncio
+    import asyncpg
+
+    async def _fetch():
+        conn = await asyncpg.connect(
+            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+        )
+        rows = await conn.fetch(
+            "SELECT DISTINCT doc_id FROM chunks WHERE doc_type IN ('email_reply', 'email_question')"
+        )
+        await conn.close()
+        return {r["doc_id"] for r in rows}
+
+    return asyncio.run(_fetch())
 
 
 def main():

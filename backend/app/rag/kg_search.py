@@ -11,7 +11,8 @@ import json
 import re
 
 # Use the same PostgreSQL connection as search.py
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+import os
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
 
 # Connection pool (shared with search.py if possible)
 _kg_pool: Optional[asyncpg.Pool] = None

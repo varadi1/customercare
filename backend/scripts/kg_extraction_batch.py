@@ -17,7 +17,8 @@ from pathlib import Path
 
 import asyncpg
 
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+import os
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 BATCH_DIR = Path("/app/data/kg_batch")
 MODEL = "gpt-4o-mini"

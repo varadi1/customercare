@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -490,10 +491,18 @@ STÍLUS:
 - Udvarias, hivatalos, de barátságos hangnem
 - Tegezés SOHA, magázás/önözés MINDIG
 - Használj feltételes módot: "amennyiben", "abban az esetben"
-- TÖMÖRSÉG: Ha a válasz egyszerű (pl. "elvégeztük", "nincs lehetőség"), légy RÖVID — 1-3 mondat elég.
-  NE fejts ki részletesen amit a kérdés nem kér.
-- Ha a kérdés KOMPLEX (több részkérdés, technikai), válaszolj részletesen.
+- TÖMÖRSÉG — KRITIKUS:
+  * Ha a válasz egyszerű (pl. "igen", "elvégeztük", "nincs lehetőség"), írj 1-2 mondatot MAXIMUM.
+  * Ha a kérdés egyetlen eldöntendő kérdés → NE fejtsd ki a hátteret, csak válaszolj.
+  * Csak KOMPLEX kérdéseknél (több részkérdés, technikai) válaszolj részletesen.
+  * Célhossz: 2-5 mondat a legtöbb válaszra. Ha rövidebben is elég, annál jobb.
 - NE kezdd "Köszönjük megkeresését" sablonnal, hanem rögtön a lényegre térj
+- Ha a Felhívás konkrét pontszámára hivatkozik a tény (pl. "4.2. pont"), IDÉZD a pontszámot a válaszban
+
+FONTOS — GREETING ÉS ALÁÍRÁS:
+- NE írj megszólítást ("Tisztelt ...!") — azt a rendszer automatikusan hozzáadja.
+- NE írj aláírást ("Üdvözlettel:", "NEÜ Zrt.") — azt is a rendszer adja.
+- A body-ban CSAK a tartalmi válasz legyen, megszólítás és aláírás NÉLKÜL.
 
 VÁLASZ FORMÁTUM (szigorúan JSON):
 {
@@ -520,7 +529,7 @@ Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
     {
         "role": "assistant",
         "content": json.dumps({
-            "body": "<p>Tisztelt Pályázó!</p><p>Tájékoztatjuk, hogy az Otthoni Energiatároló Program keretében a támogatás maximális összege háztartásonként 4.000.000 Ft. A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest.</p><p>Amennyiben további kérdése merülne fel, kérjük, forduljon hozzánk bizalommal.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség Zrt.</p>",
+            "body": "<p>Tájékoztatjuk, hogy az Otthoni Energiatároló Program keretében a támogatás maximális összege háztartásonként 4.000.000 Ft. A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest.</p>",
             "confidence": "high",
             "used_facts": [1, 2],
             "unanswered_parts": None,
@@ -533,7 +542,7 @@ def _build_greeting(sender_name: str = "", category: str = "") -> str:
     """Build appropriate greeting based on sender name and email category.
 
     Priority:
-    1. Personalized: "Tisztelt Kovács János!" (if name available and not generic)
+    1. Personalized: "Tisztelt Kovács János!" (Hungarian name order: family first)
     2. Category-based: "Tisztelt Érdeklődő!" (for general inquiries)
     3. Default: "Tisztelt Pályázó!" (matches colleague convention)
     """
@@ -543,7 +552,13 @@ def _build_greeting(sender_name: str = "", category: str = "") -> str:
 
     if name and name.lower() not in skip_names and len(name) > 2:
         # Check if it looks like a real name (not email prefix)
-        if "@" not in name and "." not in name:
+        # Allow "." for prefixes like "Dr." but reject email-like patterns
+        if "@" not in name and not re.match(r"^[\w.]+$", name):
+            name = _normalize_hungarian_name(name)
+            return f"Tisztelt {name}!"
+        # Also allow names with Dr./Prof. prefix
+        if re.match(r"^(Dr\.?|Prof\.?)\s+\w", name, re.IGNORECASE):
+            name = _normalize_hungarian_name(name)
             return f"Tisztelt {name}!"
 
     # Category-based
@@ -551,6 +566,213 @@ def _build_greeting(sender_name: str = "", category: str = "") -> str:
         return "Tisztelt Érdeklődő!"
 
     return "Tisztelt Pályázó!"
+
+
+def _normalize_hungarian_name(name: str) -> str:
+    """Normalize name to Hungarian convention: Family Given (not Given Family).
+
+    Strategy: use a comprehensive Hungarian given name set to detect order.
+    If first part is a known given name and second is not → swap to Family Given.
+    """
+    import re
+
+    name = name.strip()
+    if not name:
+        return name
+
+    # Extract prefix (Dr., Prof., stb.)
+    prefix = ""
+    prefix_match = re.match(r"^(Dr\.?|Prof\.?|Ifj\.?|Id\.?|Özv\.?)\s+", name, re.IGNORECASE)
+    if prefix_match:
+        prefix = prefix_match.group(0)
+        name = name[len(prefix):].strip()
+
+    # Fix ALL CAPS: "KOVÁCS JÁNOS" → "Kovács János"
+    parts = name.split()
+    if all(p.isupper() for p in parts if len(p) > 1):
+        parts = [p.capitalize() for p in parts]
+
+    # Contains -né suffix → already Hungarian order
+    if any("né" in p.lower() for p in parts):
+        return f"{prefix}{' '.join(parts)}"
+
+    # 3+ parts → likely already Hungarian (Kovácsné Nagy Anna, or "Nagy Kiss Anna")
+    if len(parts) >= 3:
+        return f"{prefix}{' '.join(parts)}"
+
+    # 2 parts: detect order using given name database
+    # Check BOTH accented and unaccented forms (Graph API may strip accents)
+    if len(parts) == 2:
+        first_is_given = _is_given_name(parts[0])
+        second_is_given = _is_given_name(parts[1])
+
+        if first_is_given and not second_is_given:
+            # English order: "Tamás Szegvári" → "Szegvári Tamás"
+            parts = [parts[1], parts[0]]
+        # If both are given names (rare) or neither → keep as-is
+
+    # Fix accents on known given names (after reorder)
+    parts = [_fix_given_name_accent(p) for p in parts]
+
+    return f"{prefix}{' '.join(parts)}"
+
+
+def _is_given_name(word: str) -> bool:
+    """Check if word is a known Hungarian given name (accented or unaccented)."""
+    lower = word.lower().rstrip('.')
+    # Direct match (accented given names)
+    if lower in _HUNGARIAN_GIVEN_NAMES:
+        return True
+    # Unaccented match — check if accent-fixed version is a given name
+    fixed = _ACCENT_FIX_MAP.get(lower, "")
+    if fixed and fixed in _HUNGARIAN_GIVEN_NAMES:
+        return True
+    return False
+
+
+def _fix_given_name_accent(word: str) -> str:
+    """Fix missing accents on known Hungarian given names.
+
+    Graph API often strips accents: "Tamas" → "Tamás", "Jozsef" → "József".
+    """
+    lower = word.lower()
+    accented = _ACCENT_FIX_MAP.get(lower)
+    if not accented:
+        return word
+    if word[0].isupper():
+        return accented[0].upper() + accented[1:]
+    return accented
+
+
+_ACCENT_FIX_MAP = {
+    "adam": "ádám", "andras": "andrás", "arpad": "árpád", "balint": "bálint",
+    "barnabas": "barnabás", "bela": "béla", "balazs": "balázs",
+    "daniel": "dániel", "david": "dávid", "denes": "dénes", "dezso": "dezső",
+    "erno": "ernő", "gabor": "gábor", "geza": "géza", "gergo": "gergő",
+    "gyozo": "győző", "gyorgy": "györgy", "istvan": "istván", "ivan": "iván",
+    "janos": "jános", "jozsef": "józsef", "karoly": "károly",
+    "krisztian": "krisztián", "kristof": "kristóf", "laszlo": "lászló",
+    "lorant": "lóránt", "marton": "márton", "mate": "máté", "matyas": "mátyás",
+    "mihaly": "mihály", "miklos": "miklós", "milan": "milán", "oliver": "olivér",
+    "oszkar": "oszkár", "otto": "ottó", "pal": "pál", "peter": "péter",
+    "rene": "rené", "richard": "richárd", "robert": "róbert", "sandor": "sándor",
+    "szilard": "szilárd", "tamas": "tamás", "zoltan": "zoltán",
+    "kalman": "kálmán", "lajos": "lajos",
+    # Female
+    "agnes": "ágnes", "aniko": "anikó", "eniko": "enikő", "erzsebet": "erzsébet",
+    "eva": "éva", "ildiko": "ildikó", "maria": "mária", "marta": "márta",
+    "monika": "mónika", "nora": "nóra", "noemi": "noémi", "reka": "réka",
+    "renata": "renáta", "rozalia": "rozália", "terez": "teréz",
+    "terezia": "terézia", "timea": "tímea", "tunde": "tünde",
+    "valeria": "valéria", "viktoria": "viktória", "diana": "diána",
+    "dora": "dóra", "julia": "júlia",
+    # Common family names with accents (top ~50 ékezetes családnév)
+    "kovacs": "kovács", "szabo": "szabó", "toth": "tóth", "horvath": "horváth",
+    "varga": "varga", "nemeth": "németh", "farkas": "farkas", "balogh": "balogh",
+    "papp": "papp", "takacs": "takács", "juhasz": "juhász", "kis": "kis",
+    "szucs": "szűcs", "hajdu": "hajdú", "lukacs": "lukács", "gulyas": "gulyás",
+    "biro": "bíró", "kiraly": "király", "lazar": "lázár", "bognar": "bognár",
+    "orban": "orbán", "fulop": "fülöp", "vincze": "vincze", "hegedus": "hegedűs",
+    "szekely": "székely", "szalai": "szalai", "feher": "fehér", "torok": "török",
+    "lengyel": "lengyel", "fazekas": "fazekas", "mate": "máté",
+    "bernat": "bernát", "csaszar": "császár", "deak": "deák",
+    "erdelyi": "erdélyi", "foldi": "földi", "galfi": "gálfi",
+    "halasz": "halász", "illes": "illés", "jakab": "jakab",
+    "kelemen": "kelemen", "lokos": "lőkös", "meszaros": "mészáros",
+    "nadasdi": "nádasdi", "olah": "oláh", "palfi": "pálfi",
+    "racz": "rácz", "sarkozy": "sárközy", "tatai": "tatai",
+    "ujvari": "újvári", "vasarhelyi": "vásárhelyi", "zelei": "zelei",
+    "puskas": "puskás", "szegvari": "szegvári", "csiszar": "csiszár",
+    "fabian": "fábián", "csanyi": "csányi", "becsey": "becsey",
+}
+
+
+# Common Hungarian given names (for name order detection)
+_HUNGARIAN_GIVEN_NAMES = {
+    # Male
+    "ádám", "andrás", "antal", "attila", "balázs", "bálint", "barnabás",
+    "béla", "bence", "benedek", "benjamin", "botond", "csaba", "dániel",
+    "dávid", "dénes", "dezső", "dominik", "endre", "erik", "ernő",
+    "ferenc", "gábor", "géza", "gergő", "gergely", "gli", "gustav",
+    "gusztáv", "győző", "gyula", "györgy", "henrik", "hunor", "ignác",
+    "imre", "istván", "iván", "jakab", "jános", "jenő", "józsef",
+    "károly", "krisztián", "kristóf", "lajos", "lászló", "levente",
+    "lóránt", "márk", "márton", "máté", "mátyás", "mihály", "miklós",
+    "milán", "norbert", "olivér", "oszkár", "ottó", "pál", "patrik",
+    "péter", "rené", "richárd", "róbert", "roland", "sándor", "sebestyén",
+    "szabolcs", "szilárd", "tamás", "tibor", "tivadar", "viktor",
+    "vilmos", "vince", "zoltán", "zsolt", "zsombor",
+    # Female
+    "ágnes", "andrea", "angéla", "anikó", "anna", "annamária", "anett",
+    "barbara", "beatrix", "bernadett", "boglárka", "brigitta",
+    "csilla", "diána", "dóra", "edit", "edina", "emese", "enikő",
+    "erika", "erzsébet", "eszter", "éva", "fruzsina",
+    "gabriella", "gitta", "györgyi", "hajnalka", "helga",
+    "ildikó", "ilona", "irén", "ágota", "judit", "julianna", "júlia",
+    "katalin", "kinga", "klára", "krisztina", "laura", "lilla",
+    "mária", "margit", "marianna", "márta", "melinda", "mónika",
+    "nóra", "noémi", "nikolett", "orsolya", "piroska",
+    "réka", "renáta", "rita", "rozália", "sarolta", "szilvia",
+    "teréz", "terézia", "tímea", "tünde", "valéria", "vera",
+    "veronika", "viktória", "virág", "vivien", "zita", "zsuzsanna",
+    "evelin", "petra", "bianka", "fanni",
+}
+
+
+NEU_SIGNATURE_HTML = (
+    '<p>Üdvözlettel:<br>'
+    'Nemzeti Energetikai Ügynökség<br>'
+    'Zártkörűen Működő Részvénytársaság<br>'
+    '1037- Budapest, Montevideo u. 14.</p>'
+)
+
+
+def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
+    """Replace LLM-generated greeting and signature with deterministic versions.
+
+    Problems this fixes:
+    1. LLM writes names in English order (Given Family instead of Family Given)
+    2. LLM drops accents from names (Meszaros instead of Mészáros)
+    3. LLM uses short signature ("Üdvözlettel:") instead of full NEÜ block
+    4. LLM sometimes adds extra greeting variations
+
+    Strategy: strip LLM greeting + closing, wrap content with correct ones.
+    """
+    import re
+
+    if not body_html:
+        return f"<p>{correct_greeting}</p>{NEU_SIGNATURE_HTML}"
+
+    # 1. Remove LLM greeting (first <p> containing "Tisztelt")
+    body_html = re.sub(
+        r'<p>\s*Tisztelt\s+[^<]*?!\s*</p>',
+        '',
+        body_html,
+        count=1,
+    )
+
+    # 2. Remove LLM signature variations
+    # "Üdvözlettel:" or "Üdvözlettel:\nNEÜ Zrt." etc. — everything from last "Üdvözlettel"
+    body_html = re.sub(
+        r'<p>\s*Üdvözlettel\s*:?\s*(?:<br\s*/?>.*?)?</p>\s*(?:<p>.*?(?:Nemzeti|NEÜ|Zrt|Montevideo|1037).*?</p>\s*)*$',
+        '',
+        body_html,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    # Also handle simple "Üdvözlettel:" at end without <p>
+    body_html = re.sub(
+        r'\s*Üdvözlettel\s*:?\s*$',
+        '',
+        body_html,
+        flags=re.IGNORECASE,
+    )
+
+    # 3. Clean up empty paragraphs
+    body_html = re.sub(r'<p>\s*</p>', '', body_html)
+    body_html = body_html.strip()
+
+    # 4. Reassemble: greeting + LLM content + NEÜ signature
+    return f"<p>{correct_greeting}</p>{body_html}{NEU_SIGNATURE_HTML}"
 
 
 class DraftGenerateRequest(BaseModel):
@@ -601,7 +823,7 @@ async def draft_generate(req: DraftGenerateRequest):
         if req.sender_email:
             import asyncpg as _apg
             _econn = await _apg.connect(
-                "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+                os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
             )
             try:
                 from app.reasoning.person_tracker import process_email_entities
@@ -754,8 +976,11 @@ Tárgy: {req.email_subject}
             "error": str(e),
         }
 
-    body_html = draft_data.get("body", "")
+    raw_body = draft_data.get("body", "")
     confidence = draft_data.get("confidence", "medium")
+
+    # 4b. Deterministic greeting + signature (never trust LLM for these)
+    body_html = _fix_greeting_and_signature(raw_body, greeting)
 
     # 5. NLI faithfulness verification (best-effort)
     nli_result = None
@@ -1040,7 +1265,7 @@ async def bm25_rebuild():
     try:
         import asyncpg
         pool = await asyncpg.create_pool(
-            "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp",
+            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp"),
             min_size=1, max_size=3,
         )
         async with pool.acquire() as conn:
@@ -1390,3 +1615,31 @@ async def cross_rag_stats():
 async def cross_rag_multi_db(min_dbs: int = 2, entity_type: str = None, limit: int = 50):
     """Get entities present in multiple databases."""
     return await cross_rag_api.get_multi_db_entities(min_dbs, entity_type, limit)
+
+
+# ─── Evaluation ─────────────────────────────────────────────────────────────
+
+@app.post("/eval/live")
+async def eval_live(
+    limit: int = 50,
+    mailbox: str = "lakossagitarolo@neuzrt.hu",
+    report: bool = False,
+    background_tasks: BackgroundTasks = None,
+):
+    """Run live email evaluation (compares Hanna drafts vs actual colleague answers).
+
+    This is the end-to-end quality check: fetches recent sent emails, extracts
+    the customer question, generates a Hanna draft, and compares it against
+    the actual answer using semantic + style + term overlap metrics.
+
+    Use limit=20 for a quick check, limit=250 for full eval.
+    Set report=true to generate an Obsidian report.
+    """
+    from scripts.eval_live import run_eval
+    stats = await run_eval(
+        mailbox=mailbox,
+        max_items=limit,
+        dry_run=False,
+        generate_report=report,
+    )
+    return stats

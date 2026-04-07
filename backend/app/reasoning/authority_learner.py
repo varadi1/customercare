@@ -19,7 +19,8 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+import os
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
 
 # Bounds for authority adjustments
 MAX_BOOST = 0.10

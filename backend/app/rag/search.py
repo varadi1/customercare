@@ -28,7 +28,8 @@ from .query_expansion import expand_query, expand_query_async
 
 # PostgreSQL connection pool
 _pool: Optional[asyncpg.Pool] = None
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+import os
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
 
 
 async def _get_pool() -> asyncpg.Pool:

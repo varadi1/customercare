@@ -4,12 +4,35 @@ services:
   # ChromaDB removed 2026-02-21 — fully migrated to PostgreSQL+pgvector
   # Data preserved in ./data/chromadb if needed for reference
 
+  db:
+    container_name: hanna-db
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=klara
+      - POSTGRES_PASSWORD=klara_docs_2026
+      - POSTGRES_DB=hanna_oetp
+    volumes:
+      - hanna-pgdata:/var/lib/postgresql/data
+      - ./backend/db/init_hanna_oetp.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5438:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U klara -d hanna_oetp"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   backend:
     container_name: hanna-backend
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8101:8000"
     volumes:
@@ -19,6 +42,7 @@ services:
       - ./backend/scripts:/app/scripts:ro
       - ../scripts:/app/crossrag_scripts:ro
     environment:
+      - HANNA_PG_DSN=postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp
       - CROSSRAG_DSN=postgresql://klara:klara_docs_2026@host.docker.internal:5433/cross_rag
       - CROSSRAG_SCRIPTS=/app/crossrag_scripts
       - EMBEDDING_BACKEND=bge-m3
@@ -48,3 +72,6 @@ services:
       timeout: 15s
       retries: 5
       start_period: 30s
+
+volumes:
+  hanna-pgdata:

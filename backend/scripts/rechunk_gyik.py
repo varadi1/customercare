@@ -19,7 +19,8 @@ from datetime import date
 import asyncpg
 import fitz
 
-PG_DSN = "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+import os
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
 GYIK_PDF = "/app/data/pdfs/OEPT_GYIK_20260204.pdf"
 GYIK_DOC_ID = "OEPT_GYIK_20260204.pdf"
 DRY_RUN = "--dry-run" in sys.argv

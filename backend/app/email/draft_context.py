@@ -9,6 +9,7 @@ v2 — 2026-03-01: Template matching + category confidence + feedback diffs
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -310,7 +311,7 @@ async def _get_similar_traces(email_text: str, category: str) -> list[dict]:
             return []
 
         conn = await asyncpg.connect(
-            "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
         )
         try:
             traces = await find_similar_traces(

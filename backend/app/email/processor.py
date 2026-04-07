@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -226,7 +227,7 @@ async def _process_single_email(msg) -> dict[str, Any]:
     try:
         import asyncpg
         conn = await asyncpg.connect(
-            "postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp"
+            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
         )
         try:
             from ..reasoning.person_tracker import process_email_entities
