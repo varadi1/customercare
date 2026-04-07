@@ -508,11 +508,18 @@ FONTOS — ÉKEZETEK:
 - MINDIG helyes magyar ékezetekkel írj (á, é, í, ó, ö, ő, ú, ü, ű).
 - SOHA ne írj ékezet nélküli magyar szöveget — ez ELFOGADHATATLAN hiba.
 
+FORRÁSHIVATKOZÁS — KÖTELEZŐ:
+- Minden tényállításhoz KÖTELEZŐ forrás-számot jelölni a szövegben: [1], [2], stb.
+- A szám az [ELLENŐRZÖTT TÉNY N] sorszámára utal.
+- Ha egy állítást NEM tudsz forráshoz kötni → NE írd bele a válaszba.
+- A citations mezőben sorold fel a használt forrásokat szám→dokumentum formában.
+
 VÁLASZ FORMÁTUM (szigorúan JSON):
 {
-  "body": "A levél szövege HTML formátumban (<p> tagekkel)",
+  "body": "A levél szövege HTML formátumban (<p> tagekkel), forráshivatkozásokkal [1], [2]",
   "confidence": "high|medium|low",
   "used_facts": [1, 2],
+  "citations": {"1": "dokumentum neve, pont", "2": "dokumentum neve, pont"},
   "unanswered_parts": null
 }"""
 
@@ -522,10 +529,10 @@ DRAFT_GENERATE_FEWSHOT = [
         "content": """Beérkező email: "Mennyi a maximális támogatás és kell-e önerő?"
 Tárgy: Támogatás összege
 
-[ELLENŐRZÖTT TÉNY 1] (Felhivas_OETP.pdf)
+[ELLENŐRZÖTT TÉNY 1] (Felhivas_OETP.pdf, ✓ ellenőrzött)
 "A támogatás összege legfeljebb 4.000.000 Ft lehet háztartásonként."
 
-[ELLENŐRZÖTT TÉNY 2] (Felhivas_OETP.pdf)
+[ELLENŐRZÖTT TÉNY 2] (Felhivas_OETP.pdf, ✓ ellenőrzött)
 "A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest."
 
 Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
@@ -533,9 +540,10 @@ Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
     {
         "role": "assistant",
         "content": json.dumps({
-            "body": "<p>Tájékoztatjuk, hogy az Otthoni Energiatároló Program keretében a támogatás maximális összege háztartásonként 4.000.000 Ft. A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest.</p>",
+            "body": "<p>Tájékoztatjuk, hogy az Otthoni Energiatároló Program keretében a támogatás maximális összege háztartásonként 4.000.000 Ft [1]. A pályázónak legalább 10% önerőt kell biztosítania a beruházás összköltségéhez képest [2].</p>",
             "confidence": "high",
             "used_facts": [1, 2],
+            "citations": {"1": "Felhivas_OETP.pdf", "2": "Felhivas_OETP.pdf"},
             "unanswered_parts": None,
         }, ensure_ascii=False),
     },
@@ -779,6 +787,109 @@ def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
     return f"<p>{correct_greeting}</p>{body_html}{NEU_SIGNATURE_HTML}"
 
 
+def _validate_citations(body_html: str, facts: list[dict], citations: dict) -> dict:
+    """Validate that inline citations [1], [2] in the draft body are legitimate.
+
+    Checks:
+    1. Every [N] reference maps to a real fact
+    2. Counts claims without any citation
+    """
+    plain = re.sub(r"<[^>]+>", "", body_html)
+
+    # Find all [N] references in the text
+    cited_nums = set(int(m) for m in re.findall(r"\[(\d+)\]", plain))
+
+    # Check that cited numbers are valid fact indices
+    invalid_refs = [n for n in cited_nums if n < 1 or n > len(facts)]
+
+    # Count sentences without citations (rough heuristic)
+    # Split on sentence boundaries, skip greeting/closing
+    sentences = re.split(r"[.!?]\s+", plain)
+    # Filter out very short segments, greeting, closing
+    content_sentences = [
+        s for s in sentences
+        if len(s.strip()) > 20
+        and "tisztelt" not in s.lower()
+        and "üdvözlettel" not in s.lower()
+        and "kollégánk" not in s.lower()  # standard "no info" phrase is OK uncited
+        and "kérdésére" not in s.lower()
+    ]
+    uncited = [s for s in content_sentences if not re.search(r"\[\d+\]", s)]
+
+    return {
+        "total_citations": len(cited_nums),
+        "invalid_refs": invalid_refs,
+        "uncited_claims": len(uncited),
+        "total_content_sentences": len(content_sentences),
+    }
+
+
+def _check_numerical_consistency(body_html: str, facts: list[dict]) -> list[str]:
+    """Check that numbers in the draft match numbers in the source facts.
+
+    Extracts monetary amounts (Ft), percentages, and specific numbers
+    from both draft and facts, then flags mismatches.
+    """
+    plain = re.sub(r"<[^>]+>", "", body_html).lower()
+    facts_text = " ".join(f["text"] for f in facts).lower()
+
+    warnings = []
+
+    # 1. Monetary amounts: "4.000.000 ft", "4 millió ft", "2,5 millió"
+    def _extract_amounts(text: str) -> set[int]:
+        amounts = set()
+        # "X.XXX.XXX Ft" pattern
+        for m in re.finditer(r"([\d.]+)\s*(?:ft|forint)", text):
+            try:
+                amounts.add(int(m.group(1).replace(".", "")))
+            except ValueError:
+                pass
+        # "X millió" pattern
+        for m in re.finditer(r"([\d,]+)\s*milli[oó]", text):
+            try:
+                val = float(m.group(1).replace(",", "."))
+                amounts.add(int(val * 1_000_000))
+            except ValueError:
+                pass
+        return amounts
+
+    draft_amounts = _extract_amounts(plain)
+    fact_amounts = _extract_amounts(facts_text)
+
+    if draft_amounts and fact_amounts:
+        novel_amounts = draft_amounts - fact_amounts
+        if novel_amounts:
+            warnings.append(
+                f"Ft összeg a draftban ({novel_amounts}) nem található a forrásokban ({fact_amounts})"
+            )
+
+    # 2. Percentages: "10%", "10 százalék"
+    draft_pcts = set(re.findall(r"(\d+)\s*(?:%|százalék)", plain))
+    fact_pcts = set(re.findall(r"(\d+)\s*(?:%|százalék)", facts_text))
+    if draft_pcts and fact_pcts:
+        novel_pcts = draft_pcts - fact_pcts
+        if novel_pcts:
+            warnings.append(f"Százalék a draftban ({novel_pcts}) nem található a forrásokban ({fact_pcts})")
+
+    # 3. Dates: "2026.03.16", "2026. március 16"
+    draft_dates = set(re.findall(r"\d{4}[\.\s]+\d{2}[\.\s]+\d{2}", plain))
+    fact_dates = set(re.findall(r"\d{4}[\.\s]+\d{2}[\.\s]+\d{2}", facts_text))
+    if draft_dates:
+        novel_dates = draft_dates - fact_dates
+        if novel_dates:
+            warnings.append(f"Dátum a draftban ({novel_dates}) nem található a forrásokban ({fact_dates})")
+
+    # 4. Specific kW values
+    draft_kw = set(re.findall(r"(\d+)\s*kw", plain))
+    fact_kw = set(re.findall(r"(\d+)\s*kw", facts_text))
+    if draft_kw and fact_kw:
+        novel_kw = draft_kw - fact_kw
+        if novel_kw:
+            warnings.append(f"kW érték a draftban ({novel_kw}) nem található a forrásokban ({fact_kw})")
+
+    return warnings
+
+
 class DraftGenerateRequest(BaseModel):
     email_text: str
     email_subject: str = ""
@@ -875,6 +986,27 @@ async def draft_generate(req: DraftGenerateRequest):
 
     top_chunks = rag_results[:req.max_context_chunks]
     top_score = top_chunks[0].get("score", 0) if top_chunks else 0
+
+    # 1c. Temporal staleness check — warn if chunks are outdated
+    from datetime import datetime as _dt, timedelta as _td
+    _now = _dt.now()
+    _stale_threshold = _now - _td(days=90)
+    stale_chunks = []
+    for _tc in top_chunks:
+        _meta = _tc.get("metadata", {})
+        _valid_to = _meta.get("valid_to", "")
+        _source_date_str = _meta.get("source_date") or _meta.get("valid_from", "")
+        if _valid_to and _valid_to.strip():
+            stale_chunks.append(f"{_tc.get('source','?')} (lejárt: {_valid_to})")
+        elif _source_date_str:
+            try:
+                _sd = _dt.fromisoformat(str(_source_date_str)[:10])
+                if _sd < _stale_threshold:
+                    stale_chunks.append(f"{_tc.get('source','?')} (régi: {_source_date_str})")
+            except (ValueError, TypeError):
+                pass
+    if stale_chunks:
+        print(f"[hanna] Stale chunks in top results: {stale_chunks}")
 
     # 2. Try VerbatimRAG for verified fact extraction
     verified_facts = []
@@ -994,11 +1126,25 @@ Tárgy: {req.email_subject}
 
     raw_body = draft_data.get("body", "")
     confidence = draft_data.get("confidence", "medium")
+    citations = draft_data.get("citations", {})
 
     # 4b. Deterministic greeting + signature (never trust LLM for these)
     body_html = _fix_greeting_and_signature(raw_body, greeting)
 
-    # 4c. Accent safety check — reject accent-free Hungarian drafts
+    # 4c. Citation validation — check that inline [N] refs exist and map to real facts
+    citation_warnings = _validate_citations(body_html, verified_facts, citations)
+    if citation_warnings.get("uncited_claims"):
+        print(f"[hanna] Citation warning: {citation_warnings['uncited_claims']} uncited claims")
+        if confidence == "high":
+            confidence = "medium"
+
+    # 4d. Numerical guardrail — verify amounts, dates, percentages match sources
+    num_warnings = _check_numerical_consistency(body_html, verified_facts)
+    if num_warnings:
+        print(f"[hanna] NUMERICAL MISMATCH: {num_warnings}")
+        confidence = "low"
+
+    # 4e. Accent safety check — reject accent-free Hungarian drafts
     _accent_chars = set("áéíóöőúüűÁÉÍÓÖŐÚÜŰ")
     _plain_text = re.sub(r"<[^>]+>", "", body_html)
     if len(_plain_text) > 80 and not any(c in _accent_chars for c in _plain_text):
@@ -1034,8 +1180,25 @@ Tárgy: {req.email_subject}
             confidence = "medium"
             print(f"[hanna] No NLI + no VerbatimRAG → confidence downgraded to medium")
 
-    # 6. Final confidence gate — "low" → route to human review
-    # Mark the draft category so Outlook shows it needs human attention
+    # 6. CoVe (Chain of Verification) — runs for non-high confidence drafts
+    cove_result = None
+    if confidence != "high":
+        try:
+            from .rag.cove import verify_draft
+            _draft_plain = re.sub(r"<[^>]+>", "", body_html)
+            cove_result = await verify_draft(_draft_plain, verified_facts)
+            if cove_result.get("issue_count", 0) > 0:
+                issues = cove_result["issues"]
+                contradicted = [i for i in issues if i.get("verdict") == "contradicted"]
+                if contradicted:
+                    confidence = "low"
+                    print(f"[hanna] CoVe: {len(contradicted)} CONTRADICTED claims → confidence=low")
+                else:
+                    print(f"[hanna] CoVe: {len(issues)} unsupported claims (no contradiction)")
+        except Exception as e:
+            print(f"[hanna] CoVe failed (non-blocking): {e}")
+
+    # 7. Final confidence gate — "low" → route to human review
     draft_category = "Hanna - draft kész"
     if confidence == "low":
         draft_category = "Hanna - emberi válasz kell"
@@ -1053,6 +1216,10 @@ Tárgy: {req.email_subject}
         "nli_verification": nli_result,
         "nli_failed": nli_failed,
         "verbatim_available": verbatim_available,
+        "citations": citations,
+        "citation_warnings": citation_warnings if citation_warnings.get("uncited_claims") else None,
+        "numerical_warnings": num_warnings if num_warnings else None,
+        "cove_verification": cove_result,
         "reference_check": ref_check,
         "radix_data": ctx.get("radix_data") or None,
         "suggested_confidence": ctx.get("suggested_confidence"),
