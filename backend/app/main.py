@@ -1260,7 +1260,41 @@ Tárgy: {req.email_subject}
         except Exception as e:
             print(f"[hanna] CoVe failed (non-blocking): {e}")
 
-    # 7. SelfCheck — multi-sample consistency (only for medium, cost control)
+    # 7. Answer-Question Alignment — does the draft actually answer the question?
+    alignment_result = None
+    if confidence != "skip":
+        try:
+            from .rag.answer_alignment import check_alignment
+            _draft_plain = re.sub(r"<[^>]+>", "", body_html)
+            alignment_result = await check_alignment(req.email_text, _draft_plain)
+            if not alignment_result.get("aligned", True):
+                verdict = alignment_result.get("verdict", "?")
+                reason = alignment_result.get("reason", "")
+                if verdict == "echoes":
+                    # Draft just repeats what customer said — useless, skip it
+                    print(f"[hanna] Alignment: ECHOES ({reason}) → skip")
+                    return {
+                        "skip": True,
+                        "skip_reason": f"echo_detected: {reason}",
+                        "body_html": None,
+                        "confidence": "skip",
+                        "sources": fact_sources,
+                        "method": "skip_echo",
+                    }
+                elif verdict == "irrelevant":
+                    print(f"[hanna] Alignment: IRRELEVANT ({reason}) → skip")
+                    return {
+                        "skip": True,
+                        "skip_reason": f"irrelevant_answer: {reason}",
+                        "body_html": None,
+                        "confidence": "skip",
+                        "sources": fact_sources,
+                        "method": "skip_irrelevant",
+                    }
+        except Exception as e:
+            print(f"[hanna] Alignment check failed (non-blocking): {e}")
+
+    # 8. SelfCheck — multi-sample consistency (only for medium, cost control)
     selfcheck_result = None
     if confidence == "medium":
         try:
@@ -1299,6 +1333,7 @@ Tárgy: {req.email_subject}
         "guardrails": guardrails_result if not guardrails_result["pass"] else None,
         "cove_verification": cove_result,
         "selfcheck": selfcheck_result,
+        "alignment": alignment_result,
         "reference_check": ref_check,
         "radix_data": ctx.get("radix_data") or None,
         "suggested_confidence": ctx.get("suggested_confidence"),
