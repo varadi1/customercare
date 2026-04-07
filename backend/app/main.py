@@ -1138,11 +1138,21 @@ Tárgy: {req.email_subject}
         if confidence == "high":
             confidence = "medium"
 
-    # 4d. Numerical guardrail — verify amounts, dates, percentages match sources
-    num_warnings = _check_numerical_consistency(body_html, verified_facts)
-    if num_warnings:
-        print(f"[hanna] NUMERICAL MISMATCH: {num_warnings}")
-        confidence = "low"
+    # 4d. Domain guardrails — numerical, eligibility, contradictions, forbidden phrases
+    from .rag.guardrails import run_all_guardrails
+    guardrails_result = run_all_guardrails(
+        body_html=body_html,
+        verified_facts=verified_facts,
+        top_chunks=top_chunks,
+        email_oetp_ids=req.oetp_ids or None,
+    )
+    if not guardrails_result["pass"]:
+        for w in guardrails_result["warnings"]:
+            print(f"[hanna] Guardrail {w['rule']}: {w['detail']}")
+        if guardrails_result["suggested_confidence"] == "low":
+            confidence = "low"
+        elif guardrails_result["suggested_confidence"] == "medium" and confidence == "high":
+            confidence = "medium"
 
     # 4e. Accent safety check — reject accent-free Hungarian drafts
     _accent_chars = set("áéíóöőúüűÁÉÍÓÖŐÚÜŰ")
@@ -1218,7 +1228,7 @@ Tárgy: {req.email_subject}
         "verbatim_available": verbatim_available,
         "citations": citations,
         "citation_warnings": citation_warnings if citation_warnings.get("uncited_claims") else None,
-        "numerical_warnings": num_warnings if num_warnings else None,
+        "guardrails": guardrails_result if not guardrails_result["pass"] else None,
         "cove_verification": cove_result,
         "reference_check": ref_check,
         "radix_data": ctx.get("radix_data") or None,

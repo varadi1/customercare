@@ -15,4 +15,6 @@ rank-bm25==0.2.2
 asyncpg==0.30.0
 pymysql==1.1.1
 
+langfuse>=2.0.0
+
 unstructured[all-docs]

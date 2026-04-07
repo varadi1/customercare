@@ -66,6 +66,9 @@ services:
       - AUTO_PROCESS_ENABLED=${AUTO_PROCESS_ENABLED:-false}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
+      - LANGFUSE_HOST=http://hanna-langfuse:3000
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "10", "http://localhost:8000/livez"]
       interval: 60s
@@ -73,5 +76,38 @@ services:
       retries: 5
       start_period: 30s
 
+  langfuse-db:
+    container_name: hanna-langfuse-db
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse_hanna
+      - POSTGRES_DB=langfuse
+    volumes:
+      - langfuse-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  langfuse:
+    container_name: hanna-langfuse
+    image: langfuse/langfuse:2
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse_hanna@hanna-langfuse-db:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3001
+      - NEXTAUTH_SECRET=hanna-langfuse-secret-260407
+      - SALT=hanna-langfuse-salt-260407
+      - TELEMETRY_ENABLED=false
+
 volumes:
   hanna-pgdata:
+  langfuse-pgdata:
