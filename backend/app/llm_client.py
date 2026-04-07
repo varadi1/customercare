@@ -1,7 +1,7 @@
 """
 Multi-provider LLM client with automatic fallback.
 
-Priority: OpenAI (gpt-5.4-mini) → Anthropic (claude-sonnet-4-6) → Google (gemini-flash-latest)
+Priority: Anthropic (claude-opus-4-6) → OpenAI (gpt-5.4) → Google (gemini-flash-latest)
 Each provider is tried in order; if one fails, the next is used.
 
 Config via .env:
@@ -27,18 +27,18 @@ logger = logging.getLogger(__name__)
 # Provider configs
 PROVIDERS = [
     {
-        "name": "openai",
-        "model": "gpt-5.4-mini",
-        "url": "https://api.openai.com/v1/chat/completions",
-        "key_attr": "openai_api_key",
-        "format": "openai",
-    },
-    {
         "name": "anthropic",
-        "model": "claude-sonnet-4-6",
+        "model": "claude-opus-4-6",
         "url": "https://api.anthropic.com/v1/messages",
         "key_attr": "anthropic_api_key",
         "format": "anthropic",
+    },
+    {
+        "name": "openai",
+        "model": "gpt-5.4",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "key_attr": "openai_api_key",
+        "format": "openai",
     },
     {
         "name": "google",
@@ -179,7 +179,7 @@ async def _call_provider(
         if fmt == "openai":
             return await _call_openai(client, provider, api_key, messages, temperature, max_tokens, json_mode)
         elif fmt == "anthropic":
-            return await _call_anthropic(client, provider, api_key, messages, temperature, max_tokens)
+            return await _call_anthropic(client, provider, api_key, messages, temperature, max_tokens, json_mode)
         elif fmt == "google":
             return await _call_google(client, provider, api_key, messages, temperature, max_tokens)
         else:
@@ -210,7 +210,7 @@ async def _call_openai(client, provider, api_key, messages, temperature, max_tok
     return resp.json()["choices"][0]["message"]["content"]
 
 
-async def _call_anthropic(client, provider, api_key, messages, temperature, max_tokens) -> str:
+async def _call_anthropic(client, provider, api_key, messages, temperature, max_tokens, json_mode=False) -> str:
     # Convert OpenAI format to Anthropic format
     system_msg = ""
     user_messages = []
@@ -227,6 +227,8 @@ async def _call_anthropic(client, provider, api_key, messages, temperature, max_
         "messages": user_messages,
     }
     if system_msg:
+        if json_mode:
+            system_msg += "\n\nIMPORTANT: Respond with valid JSON only. No markdown, no code blocks, just the raw JSON object."
         payload["system"] = system_msg
 
     resp = await client.post(
@@ -240,7 +242,9 @@ async def _call_anthropic(client, provider, api_key, messages, temperature, max_
     )
     resp.raise_for_status()
     data = resp.json()
-    return data["content"][0]["text"]
+    text = data["content"][0]["text"]
+
+    return text
 
 
 async def _call_google(client, provider, api_key, messages, temperature, max_tokens) -> str:

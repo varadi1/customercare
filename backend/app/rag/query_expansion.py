@@ -117,10 +117,21 @@ async def expand_query_async(query: str) -> list[str]:
             ],
             temperature=0.2,
             max_tokens=350,
+            json_mode=True,
         )
 
         content = llm_result["content"].strip()
-        queries = json.loads(content)
+        # Handle both raw JSON array and wrapped JSON
+        if content.startswith("["):
+            queries = json.loads(content)
+        else:
+            # Try to extract JSON array from response
+            import re
+            match = re.search(r'\[.*\]', content, re.DOTALL)
+            if match:
+                queries = json.loads(match.group())
+            else:
+                queries = [content]
 
         if isinstance(queries, list) and len(queries) >= 1:
             if query not in queries:
