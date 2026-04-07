@@ -187,8 +187,15 @@ async def ingest_historical_emails(
             msg_id_hash = _hashlib.sha256(full_msg_id.encode()).hexdigest()[:16]
             source = f"email_reply:{mailbox}:{msg_id_hash}"
 
-            # Format for ingestion: subject + full body (answer + quoted question)
-            full_text = f"Tárgy: {subject}\nMailbox: {mailbox}\nDátum: {sent_date}\n\n{body_text}"
+            # Depersonalize before ingestion — remove names, OETP IDs, emails, phones
+            from ..rag.depersonalize import depersonalize
+            clean_body = depersonalize(body_text)
+
+            # Format for ingestion: subject + cleaned body
+            # Strip OETP IDs from subject too
+            import re as _re
+            clean_subject = _re.sub(r"OETP-\d{4}-\d{4,8}", "[pályázat]", subject)
+            full_text = f"Tárgy: {clean_subject}\nDátum: {sent_date}\n\n{clean_body}"
 
             if dry_run:
                 stats["ingested"] += 1

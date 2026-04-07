@@ -127,6 +127,7 @@ def get_existing_sources() -> set[str]:
     """Get all existing source prefixes to avoid duplicates (PostgreSQL)."""
     import asyncio
     import asyncpg
+    import os
 
     async def _fetch():
         conn = await asyncpg.connect(
@@ -230,14 +231,18 @@ def main():
                         continue
                     seen_subjects.add(clean_subj)
 
-                    # Format for ingestion
+                    # Depersonalize before ingestion
+                    from app.rag.depersonalize import depersonalize
+                    clean_body = depersonalize(body_text)
+                    import re as _re
+                    clean_subject = _re.sub(r"OETP-\d{4}-\d{4,8}", "[pályázat]", subject)
+
+                    # Format for ingestion (no sender PII)
                     full_text = (
                         f"Téma: {fname}\n"
-                        f"Tárgy: {subject}\n"
-                        f"Feladó: {sender_name} ({sender_addr})\n"
-                        f"Mailbox: {mailbox}\n"
+                        f"Tárgy: {clean_subject}\n"
                         f"Dátum: {recv_date}\n\n"
-                        f"{body_text}"
+                        f"{clean_body}"
                     )
 
                     if args.dry_run:
