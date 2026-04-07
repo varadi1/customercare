@@ -620,30 +620,41 @@ def _strip_enrichment_prefix(text: str) -> str:
     return text.strip()
 
 
-def _build_greeting(sender_name: str = "", category: str = "") -> str:
-    """Build appropriate greeting based on sender name and email category.
+def _build_greeting(sender_name: str = "", category: str = "", email_body: str = "") -> str:
+    """Build appropriate greeting.
 
     Priority:
-    1. Personalized: "Tisztelt Kovács János!" (Hungarian name order: family first)
-    2. Category-based: "Tisztelt Érdeklődő!" (for general inquiries)
-    3. Default: "Tisztelt Pályázó!" (matches colleague convention)
+    1. Name from email body signature (most reliable — customer wrote it)
+    2. Graph API sender_name (if it's a person name, not company)
+    3. Category-based: "Tisztelt Érdeklődő!"
+    4. Default: "Tisztelt Pályázó!"
     """
-    # Skip generic/empty names
+    from .email.name_extractor import extract_name_from_body, is_company_name
+
+    # Priority 1: Try email body signature
+    if email_body:
+        body_name = extract_name_from_body(email_body)
+        if body_name:
+            return f"Tisztelt {body_name}!"
+
+    # Priority 2: Graph API sender_name (if person, not company)
     skip_names = {"", "null", "none", "info", "admin", "support"}
     name = (sender_name or "").strip()
 
     if name and name.lower() not in skip_names and len(name) > 2:
-        # Check if it looks like a real name (not email prefix)
-        # Allow "." for prefixes like "Dr." but reject email-like patterns
+        # Skip company names
+        if is_company_name(name):
+            return "Tisztelt Partnerünk!"
+
+        # Check if it looks like a real name
         if "@" not in name and not re.match(r"^[\w.]+$", name):
             name = _normalize_hungarian_name(name)
             return f"Tisztelt {name}!"
-        # Also allow names with Dr./Prof. prefix
         if re.match(r"^(Dr\.?|Prof\.?)\s+\w", name, re.IGNORECASE):
             name = _normalize_hungarian_name(name)
             return f"Tisztelt {name}!"
 
-    # Category-based
+    # Priority 3: Category-based
     if category in ("altalanos", "hatarido"):
         return "Tisztelt Érdeklődő!"
 
@@ -1060,7 +1071,7 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
     lf_trace.search(rag_results, req.email_text[:200])
 
     # Smart greeting: personalized if sender name available, else category-based
-    greeting = _build_greeting(req.sender_name, ctx.get("category", ""))
+    greeting = _build_greeting(req.sender_name, ctx.get("category", ""), req.email_text)
 
     if not rag_results:
         return {
