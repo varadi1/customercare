@@ -979,14 +979,16 @@ class DraftGenerateRequest(BaseModel):
 
 @app.post("/draft/generate")
 async def draft_generate(req: DraftGenerateRequest):
-    """Generate a grounded, coherent email draft.
+    """Generate a grounded, coherent email draft."""
+    from .observability import trace_draft
 
-    Pipeline:
-    1. draft_context (RAG + skip filter + style guide)
-    2. VerbatimRAG extracts verified spans from top chunks
-    3. LLM reformulates spans into a coherent, polite email
-    4. NLI verification (best-effort)
-    """
+    async with trace_draft(req.email_text, req.email_subject, req.sender_name) as lf_trace:
+        result = await _draft_generate_impl(req, lf_trace)
+    return result
+
+
+async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
+    """Internal draft generation with Langfuse tracing."""
     # 1. Draft context (includes skip filter)
     ctx = await draft_context.build_draft_context(
         email_text=req.email_text,
@@ -997,6 +999,7 @@ async def draft_generate(req: DraftGenerateRequest):
     )
 
     if ctx.get("skip"):
+        lf_trace.output(confidence="skip", category=ctx.get("skip_reason", "skip"))
         return {
             "skip": True,
             "skip_reason": ctx["skip_reason"],
@@ -1046,6 +1049,9 @@ async def draft_generate(req: DraftGenerateRequest):
 
     rag_results = ctx.get("rag_results", [])
     style = ctx.get("style_guide", {})
+
+    # Langfuse: log search results
+    lf_trace.search(rag_results, req.email_text[:200])
 
     # Smart greeting: personalized if sender name available, else category-based
     greeting = _build_greeting(req.sender_name, ctx.get("category", ""))
@@ -1189,6 +1195,9 @@ Tárgy: {req.email_subject}
         llm_provider = llm_result["provider"]
         llm_model = llm_result["model"]
         draft_data = json.loads(raw)
+
+        # Langfuse: log LLM call
+        lf_trace.llm(model=llm_model, provider=llm_provider)
     except Exception as e:
         # LLM failed — SKIP, never dump raw chunks as a "response"
         print(f"[hanna] LLM FAILED: {e} — skipping draft (no raw chunk dump)")
@@ -1369,10 +1378,14 @@ Tárgy: {req.email_subject}
         except Exception as e:
             print(f"[hanna] SelfCheck failed (non-blocking): {e}")
 
-    # 8. Final confidence gate — "low" → route to human review
+    # Final confidence gate — "low" → route to human review
     draft_category = "Hanna - draft kész"
     if confidence == "low":
         draft_category = "Hanna - emberi válasz kell"
+
+    # Langfuse: log verification results + output
+    lf_trace.verify(nli_result=nli_result, cove_result=cove_result, guardrails=guardrails_result)
+    lf_trace.output(body_html=body_html, confidence=confidence, category=draft_category)
 
     return {
         "skip": False,
