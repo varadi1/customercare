@@ -521,6 +521,15 @@ GREETING ÉS ALÁÍRÁS:
 - NE írj aláírást — azt is a rendszer adja.
 - CSAK a tartalmi válasz legyen a body-ban.
 
+PÁLYÁZÓI ADATOK (ha [PÁLYÁZÓI ADATOK] blokk van):
+- Ha az ügyfél arra kíváncsi, sikeresen benyújtotta-e a pályázatát → MONDD MEG a státuszt (pl. "Benyújtva", "Formai ellenőrzés alatt").
+- Ha a státusz "Benyújtva" → erősítsd meg: "Tájékoztatjuk, hogy a pályázata sikeresen beérkezett, jelenleg Benyújtva státuszban van."
+- KONKRÉTAN válaszolj a kérdésre a pályázói adatok alapján, ne küldd el a portálra megnézni ha te is tudod a választ.
+- TILOS megmondani, hogy nyertes-e vagy nem nyertes, KIVÉVE ha a "[PÁLYÁZÓI ADATOK]" blokkban "[AZONOSÍTOTT PÁLYÁZÓ]" jelölés van — az azt jelenti, az ügyfél emailcíme egyezik a pályázóéval és jogosult a saját adataira.
+- Ha "[NEM AZONOSÍTOTT — eredmény nem közölhető]" jelölés van → NE közöld a nyertes/nem nyertes státuszt. Mondd: "Az eredményről az értesítési központban kap tájékoztatást."
+- Az igényelt/jóváhagyott támogatás összegét megoszthatod (az nem titkos).
+- A kivitelező nevét, POD számot, célterületet szabadon megoszthatod.
+
 ÉKEZETEK:
 - MINDIG helyes magyar ékezetekkel írj. Ékezet nélküli szöveg ELFOGADHATATLAN.
 
@@ -835,7 +844,7 @@ NEU_SIGNATURE_HTML = (
     '<p>Üdvözlettel:<br>'
     'Nemzeti Energetikai Ügynökség<br>'
     'Zártkörűen Működő Részvénytársaság<br>'
-    '1037- Budapest, Montevideo u. 14.</p>'
+    '1037 Budapest, Montevideo u. 14.</p>'
 )
 
 
@@ -856,18 +865,29 @@ def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
         return f"<p>{correct_greeting}</p>{NEU_SIGNATURE_HTML}"
 
     # 1. Remove ALL LLM greetings ("Tisztelt ...!" patterns)
-    # The LLM sometimes adds greeting despite being told not to
+    # The LLM sometimes adds greeting despite being told not to.
+    # Patterns: "Tisztelt Pályázó!", "Tisztelt Tisztelt X!", "Kedves Y!" etc.
     body_html = re.sub(
-        r'<p>\s*Tisztelt\s+[^<]*?!\s*</p>',
+        r'<p>\s*(?:Tisztelt|Kedves)\s+[^<]*?!\s*</p>',
         '',
         body_html,
+        flags=re.IGNORECASE,
     )
     # Also catch greeting at start of a paragraph (not in its own <p>)
     body_html = re.sub(
-        r'(<p>)\s*Tisztelt\s+[^!]*!\s*',
+        r'(<p>)\s*(?:Tisztelt|Kedves)\s+[^!]*!\s*',
         r'\1',
         body_html,
         count=1,
+        flags=re.IGNORECASE,
+    )
+    # Catch bare "Tisztelt" at very start (no <p> wrapper, multiline)
+    body_html = re.sub(
+        r'^\s*(?:Tisztelt|Kedves)\s+[^!]*!\s*(?:<br\s*/?>)?\s*',
+        '',
+        body_html,
+        count=1,
+        flags=re.IGNORECASE,
     )
 
     # 2. Remove LLM signature variations
@@ -1206,7 +1226,9 @@ Tárgy: {req.email_subject}
         oetp_data = await enrich_draft_context(oetp_ids=req.oetp_ids, sender_email=req.sender_email)
         if oetp_data:
             for app in oetp_data.get("applications", []):
-                user_msg += "\n\n" + format_applicant_context(app)
+                user_msg += "\n\n" + format_applicant_context(app, sender_email=req.sender_email)
+            for app in oetp_data.get("sender_applications", []):
+                user_msg += "\n\n" + format_applicant_context(app, sender_email=req.sender_email)
     except Exception:
         pass
 

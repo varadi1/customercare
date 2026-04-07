@@ -137,18 +137,47 @@ CELTERULET_MAP = {
 }
 
 
-def format_applicant_context(data: dict[str, Any]) -> str:
-    """Format applicant data as LLM-readable context block."""
+def format_applicant_context(data: dict[str, Any], sender_email: str = "") -> str:
+    """Format applicant data as LLM-readable context block.
+
+    If sender_email matches the applicant or representative email,
+    marks the data as "[AZONOSÍTOTT PÁLYÁZÓ]" — eligible to see all data
+    including winning status. Otherwise marks as "[NEM AZONOSÍTOTT]".
+    """
     if not data:
         return ""
 
-    status_text = STATUS_MAP.get(data.get("status"), f"Ismeretlen ({data.get('status')})")
+    status_code = data.get("status")
+    status_text = STATUS_MAP.get(status_code, f"Ismeretlen ({status_code})")
     celterulet_text = CELTERULET_MAP.get(data.get("celterulet"), "")
 
-    lines = ["[PÁLYÁZÓI ADATOK — OETP adatbázisból]"]
+    # Identity check: does sender email match applicant or representative?
+    sender_lower = (sender_email or "").strip().lower()
+    applicant_email = (data.get("palyazo_email") or "").strip().lower()
+    representative_email = (data.get("megbizott_email") or "").strip().lower()
+
+    is_identified = sender_lower and (
+        sender_lower == applicant_email or sender_lower == representative_email
+    )
+
+    # Result status — only share if identified AND already notified (status >= 6)
+    RESULT_STATUSES = {6, 7, 8}  # Nyertes, Nem nyertes, Elutasított
+    can_share_result = is_identified and status_code in RESULT_STATUSES
+
+    if is_identified:
+        id_tag = "[AZONOSÍTOTT PÁLYÁZÓ]"
+    else:
+        id_tag = "[NEM AZONOSÍTOTT — eredmény nem közölhető]"
+
+    lines = [f"[PÁLYÁZÓI ADATOK — OETP adatbázisból] {id_tag}"]
     lines.append(f"- Pályázati kódszám: {data.get('palyazati_kodszam', '?')}")
     lines.append(f"- Pályázó neve: {data.get('palyazo_neve', '?')}")
-    lines.append(f"- Státusz: {status_text}")
+
+    # For result statuses of unidentified senders, mask the winning status
+    if status_code in RESULT_STATUSES and not can_share_result:
+        lines.append(f"- Státusz: Elbírálás megtörtént (eredmény nem közölhető)")
+    else:
+        lines.append(f"- Státusz: {status_text}")
 
     if data.get("meghatalmazott_neve"):
         lines.append(f"- Meghatalmazott: {data['meghatalmazott_neve']}")

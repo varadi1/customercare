@@ -25,7 +25,7 @@ def _final_safety_check(body_html: str, confidence: str) -> str:
     If any issue found, replaces with a safe fallback message.
     """
     if not body_html or not body_html.strip():
-        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037- Budapest, Montevideo u. 14.</p>"
+        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037 Budapest, Montevideo u. 14.</p>"
 
     # Check for accent-free Hungarian text
     plain = BeautifulSoup(body_html, "html.parser").get_text()
@@ -33,7 +33,7 @@ def _final_safety_check(body_html: str, confidence: str) -> str:
 
     if len(plain) > 80 and not any(c in accent_chars for c in plain):
         print("[drafts] BLOCKED: accent-free draft detected at final gate!")
-        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037- Budapest, Montevideo u. 14.</p>"
+        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037 Budapest, Montevideo u. 14.</p>"
 
     return body_html
 
