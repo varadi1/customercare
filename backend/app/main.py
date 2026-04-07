@@ -589,6 +589,12 @@ Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
 ]
 
 
+def _get_draft_system_prompt() -> str:
+    """Get draft system prompt — from Langfuse if available, otherwise from code."""
+    from .observability import get_prompt
+    return get_prompt("draft_generate_system", fallback=DRAFT_GENERATE_SYSTEM)
+
+
 def _strip_enrichment_prefix(text: str) -> str:
     """Remove contextual enrichment prefix from chunk text.
 
@@ -1179,7 +1185,7 @@ Tárgy: {req.email_subject}
     from .llm_client import chat_completion
 
     messages = [
-        {"role": "system", "content": DRAFT_GENERATE_SYSTEM},
+        {"role": "system", "content": _get_draft_system_prompt()},
         *DRAFT_GENERATE_FEWSHOT,
         {"role": "user", "content": user_msg},
     ]

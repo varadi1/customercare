@@ -142,6 +142,28 @@ class DraftTrace:
             pass
 
 
+def get_prompt(name: str, fallback: str = "") -> str:
+    """Get prompt from Langfuse prompt management. Falls back to code if unavailable.
+
+    Args:
+        name: Prompt name in Langfuse (e.g. "draft_generate_system")
+        fallback: Default prompt text if Langfuse unavailable
+
+    Returns:
+        Prompt text (from Langfuse if available, otherwise fallback)
+    """
+    lf = _get_langfuse()
+    if not lf or not _enabled:
+        return fallback
+
+    try:
+        prompt = lf.get_prompt(name)
+        compiled = prompt.compile()
+        return compiled
+    except Exception:
+        return fallback
+
+
 @asynccontextmanager
 async def trace_draft(email_text: str = "", subject: str = "", sender: str = ""):
     """Context manager for tracing a draft generation."""
