@@ -80,7 +80,12 @@ async def categorize_changes(
             max_tokens=400,
             json_mode=True,
         )
-        parsed = json.loads(result["content"])
+        raw = result["content"].strip()
+        # Strip markdown code block wrapper (Anthropic sometimes adds ```json ... ```)
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            raw = raw.rsplit("```", 1)[0].strip()
+        parsed = json.loads(raw)
         return {
             "change_types": parsed.get("change_types", []),
             "lesson": parsed.get("lesson", ""),

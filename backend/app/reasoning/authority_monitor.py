@@ -29,7 +29,7 @@ def save_authority_snapshot(adjustments: dict[str, dict[str, float]]) -> Path | 
     if not adjustments:
         return None
 
-    ts = datetime.now(timezone.utc).strftime("%y%m%d_%H%M")
+    ts = datetime.now(timezone.utc).strftime("%y%m%d_%H%M%S")
     path = _snapshot_dir() / f"authority_{ts}.json"
     path.write_text(json.dumps(adjustments, ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info("Saved authority snapshot: %s (%d categories)", path.name, len(adjustments))
