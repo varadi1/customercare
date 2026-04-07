@@ -1259,9 +1259,16 @@ Tárgy: {req.email_subject}
             max_tokens=1000,
             json_mode=True,
         )
-        raw = llm_result["content"]
+        raw = llm_result["content"].strip()
         llm_provider = llm_result["provider"]
         llm_model = llm_result["model"]
+        # Strip markdown code block wrapper (Anthropic sometimes wraps JSON in ```json...```)
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            raw = raw.rsplit("```", 1)[0].strip()
+        # Fix common LLM JSON errors: trailing comma before }
+        raw = re.sub(r",\s*}", "}", raw)
+        raw = re.sub(r",\s*]", "]", raw)
         draft_data = json.loads(raw)
 
         # Langfuse: log LLM call
