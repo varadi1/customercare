@@ -417,14 +417,16 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
             results["match_by_body"] += 1
             results["uncertain_matches"] += 1
 
+        sent_text_matched = sent_text_cache.get(best_sent_id, "")
         detail = {
             "subject": draft.get("subject", "")[:60],
             "confidence": draft.get("confidence", ""),
             "similarity": round(best_sim, 3),
             "match_method": match_method,
             "reliable": match_method in ("conv", "subject"),
-            "draft_text": draft_text if best_sim < 0.6 else "",
-            "sent_text": sent_text_cache.get(best_sent_id, "") if best_sim < 0.6 else "",
+            "category": draft.get("category", ""),
+            "draft_text": draft_text if best_sim < 0.85 else "",
+            "sent_text": sent_text_matched if best_sim < 0.85 else "",
         }
 
         if best_sim >= UNCHANGED_THRESHOLD:
@@ -469,6 +471,10 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
 async def _sync_feedback_to_traces(details: list[dict], drafts: list[dict]) -> None:
     """Write feedback results to reasoning_traces table for learning.
 
+    v6 — 2026-04-07:
+      - Find EXISTING trace by email_message_id or subject instead of creating duplicates
+      - Run feedback analytics (categorize_changes, chunk_survival, Langfuse export)
+
     Only syncs drafts that have a definitive outcome (not pending).
     """
     import asyncpg
@@ -497,16 +503,45 @@ async def _sync_feedback_to_traces(details: list[dict], drafts: list[dict]) -> N
                     matching_draft = d
                     break
 
-            # Create trace if not exists, then resolve
-            trace_id = await create_trace(
-                conn=conn,
-                query_text=subject,
-                category=detail.get("category", (matching_draft or {}).get("category", "")),
-                confidence=detail.get("confidence", (matching_draft or {}).get("confidence", "")),
-                draft_text=draft_text if draft_text else None,
-                sender_name=(matching_draft or {}).get("sender_name"),
-                sender_email=(matching_draft or {}).get("sender_email"),
-            )
+            # Try to find EXISTING trace (created by processor.py during draft generation)
+            # instead of creating a duplicate without top_chunks/query_embedding
+            message_id = (matching_draft or {}).get("message_id", "")
+            norm_subj = _norm_subject(subject)[:40]
+            trace_id = None
+
+            if message_id:
+                row = await conn.fetchrow(
+                    """SELECT id FROM reasoning_traces
+                       WHERE email_message_id = $1 AND outcome = 'PENDING'
+                       ORDER BY created_at DESC LIMIT 1""",
+                    message_id,
+                )
+                if row:
+                    trace_id = row["id"]
+
+            if not trace_id and norm_subj:
+                row = await conn.fetchrow(
+                    """SELECT id FROM reasoning_traces
+                       WHERE LOWER(LEFT(query_text, 50)) LIKE $1
+                         AND outcome = 'PENDING'
+                         AND created_at >= NOW() - INTERVAL '72 hours'
+                       ORDER BY created_at DESC LIMIT 1""",
+                    f"%{norm_subj}%",
+                )
+                if row:
+                    trace_id = row["id"]
+
+            # Fallback: create new trace if no existing one found
+            if not trace_id:
+                trace_id = await create_trace(
+                    conn=conn,
+                    query_text=subject,
+                    category=detail.get("category", (matching_draft or {}).get("category", "")),
+                    confidence=detail.get("confidence", (matching_draft or {}).get("confidence", "")),
+                    draft_text=draft_text if draft_text else None,
+                    sender_name=(matching_draft or {}).get("sender_name"),
+                    sender_email=(matching_draft or {}).get("sender_email"),
+                )
 
             await resolve_trace(
                 conn=conn,
@@ -514,6 +549,31 @@ async def _sync_feedback_to_traces(details: list[dict], drafts: list[dict]) -> N
                 sent_text=sent_text or "",
                 similarity_score=sim,
             )
+
+            # ── Run feedback analytics (non-blocking for individual failures) ──
+            try:
+                from ..reasoning.feedback_analytics import run_analytics_for_feedback
+                top_chunks = (matching_draft or {}).get("top_chunks", [])
+                category = detail.get("category", (matching_draft or {}).get("category", ""))
+                await run_analytics_for_feedback(
+                    trace_id=trace_id,
+                    draft_text=draft_text,
+                    sent_text=sent_text,
+                    category=category,
+                    top_chunks=top_chunks,
+                    metadata={
+                        "query_text": subject,
+                        "subject": (matching_draft or {}).get("subject", subject),
+                        "category": category,
+                        "confidence": detail.get("confidence", ""),
+                        "similarity": sim,
+                        "outcome": detail.get("status", ""),
+                        "match_method": detail.get("match_method", ""),
+                        "top_chunks": top_chunks,
+                    },
+                )
+            except Exception as e:
+                _logger.warning("Feedback analytics failed for %s: %s", subject[:40], e)
 
         _logger.info("Synced %d feedback results to reasoning_traces", len(to_sync))
     finally:

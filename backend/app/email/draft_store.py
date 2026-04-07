@@ -32,10 +32,14 @@ def save_draft(
     confidence: str,
     draft_id: str = "",
     subject: str = "",
+    top_chunks: list[dict] | None = None,
+    category: str = "",
+    sender_name: str = "",
+    sender_email: str = "",
 ) -> None:
     """Save a draft to the store."""
     data = _load()
-    data.append({
+    entry = {
         "conversation_id": conversation_id,
         "message_id": message_id,
         "mailbox": mailbox,
@@ -44,7 +48,16 @@ def save_draft(
         "draft_html": draft_html,
         "confidence": confidence,
         "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+    }
+    if top_chunks:
+        entry["top_chunks"] = top_chunks[:5]
+    if category:
+        entry["category"] = category
+    if sender_name:
+        entry["sender_name"] = sender_name
+    if sender_email:
+        entry["sender_email"] = sender_email
+    data.append(entry)
     # Keep last 500 entries
     if len(data) > 500:
         data = data[-500:]

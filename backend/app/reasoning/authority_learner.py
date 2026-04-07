@@ -142,6 +142,76 @@ async def compute_authority_adjustments(days: int = 30) -> dict[str, dict[str, f
         await conn.close()
 
 
+async def update_chunk_survival_rates(days: int = 30) -> int:
+    """Aggregate chunk survival data from feedback_analytics into chunks table.
+
+    Returns the number of chunks updated.
+    """
+    conn = await asyncpg.connect(PG_DSN)
+    try:
+        from datetime import datetime, timedelta
+        since = datetime.utcnow() - timedelta(days=days)
+
+        # Fetch all chunk survival records
+        rows = await conn.fetch(
+            """
+            SELECT chunk_survival
+            FROM feedback_analytics
+            WHERE chunk_survival IS NOT NULL
+              AND chunk_survival != '[]'::jsonb
+              AND created_at >= $1
+            """,
+            since,
+        )
+
+        if not rows:
+            logger.info("No chunk survival data found for aggregation")
+            return 0
+
+        # Aggregate per chunk_id
+        from collections import defaultdict
+        stats: dict[str, dict] = defaultdict(lambda: {"survived": 0, "total": 0})
+
+        for row in rows:
+            survival = row["chunk_survival"]
+            if isinstance(survival, str):
+                try:
+                    survival = json.loads(survival)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+            for entry in survival:
+                cid = entry.get("chunk_id", "")
+                if not cid:
+                    continue
+                stats[cid]["total"] += 1
+                if entry.get("survived"):
+                    stats[cid]["survived"] += 1
+
+        # Update chunks table
+        updated = 0
+        for chunk_id, s in stats.items():
+            if s["total"] < 1:
+                continue
+            rate = round(s["survived"] / s["total"], 3)
+            result = await conn.execute(
+                """
+                UPDATE chunks
+                SET survival_rate = $1, survival_count = $2, appearance_count = $3
+                WHERE id = $4
+                """,
+                rate, s["survived"], s["total"], chunk_id,
+            )
+            if "UPDATE 1" in result:
+                updated += 1
+
+        logger.info("Updated survival rates for %d chunks (from %d analytics records)", updated, len(rows))
+        return updated
+
+    finally:
+        await conn.close()
+
+
 def apply_learned_adjustments(
     results: list[dict],
     category: str,

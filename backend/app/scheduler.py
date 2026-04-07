@@ -186,11 +186,12 @@ async def _notify_discord_error(error: str) -> None:
 
 
 async def _run_weekly_report():
-    """Weekly knowledge gap report + authority refresh."""
+    """Weekly knowledge gap report + authority refresh + chunk survival + drift monitor."""
     logger.info("Scheduler: running weekly report...")
     try:
         from .reasoning.knowledge_gaps import generate_gap_report, format_obsidian_report
-        from .reasoning.authority_learner import refresh_adjustments_cache
+        from .reasoning.authority_learner import refresh_adjustments_cache, update_chunk_survival_rates
+        from .reasoning.authority_monitor import save_authority_snapshot, compute_authority_drift_report, format_drift_report
         from pathlib import Path
 
         # Gap report
@@ -207,6 +208,23 @@ async def _run_weekly_report():
         # Authority refresh
         adj = await refresh_adjustments_cache(days=30)
         logger.info("Scheduler: authority refreshed (%d categories)", len(adj))
+
+        # Save authority snapshot + compute drift
+        if adj:
+            save_authority_snapshot(adj)
+            drift = compute_authority_drift_report()
+            if drift.get("has_drift"):
+                drift_msg = format_drift_report(drift)
+                await _send_discord(f"📊 {drift_msg}")
+                logger.info("Scheduler: authority drift detected and reported")
+
+        # Update chunk survival rates from feedback analytics
+        try:
+            updated = await update_chunk_survival_rates(days=30)
+            if updated > 0:
+                logger.info("Scheduler: updated survival rates for %d chunks", updated)
+        except Exception as e:
+            logger.warning("Scheduler: chunk survival update failed: %s", e)
 
     except Exception as e:
         logger.error("Scheduler: weekly report failed: %s", e)

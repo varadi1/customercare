@@ -109,6 +109,28 @@ async def generate_gap_report(days: int = 7) -> dict[str, Any]:
             ),
         }
 
+        # ── Gap detection from feedback analytics (Level 4) ──
+        try:
+            from .gap_detector import (
+                extract_human_additions, cluster_additions,
+                suggest_new_chunks, format_gap_detection_report,
+            )
+            additions = await extract_human_additions(days=days)
+            if additions:
+                from ..config import settings
+                clusters = await cluster_additions(
+                    additions,
+                    min_cluster_size=settings.gap_detection_min_cluster,
+                    similarity_threshold=settings.gap_detection_similarity_threshold,
+                )
+                suggestions = await suggest_new_chunks(clusters)
+                report["gap_clusters"] = clusters
+                report["gap_suggestions"] = suggestions
+                report["gap_detection_report"] = format_gap_detection_report(clusters, suggestions)
+        except Exception as e:
+            logger.warning("Gap detection failed (non-fatal): %s", e)
+            report["gap_detection_error"] = str(e)
+
         return report
 
     finally:
@@ -184,6 +206,11 @@ def format_obsidian_report(report: dict[str, Any]) -> str:
     lines.extend(["## Javaslatok", ""])
     for rec in report.get("recommendations", []):
         lines.append(f"- {rec}")
+
+    # Gap detection section (Level 4)
+    gap_report = report.get("gap_detection_report", "")
+    if gap_report:
+        lines.extend(["", gap_report])
 
     lines.extend([
         "",

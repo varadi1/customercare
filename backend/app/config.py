@@ -69,6 +69,21 @@ class Settings(BaseSettings):
     # Autonomous processing
     auto_process_enabled: bool = False  # Feature flag for autonomous email processing
 
+    # Feedback analytics (Level 1 learning)
+    feedback_analytics_enabled: bool = True
+    langfuse_dataset_name: str = "hanna-draft-pairs"
+
+    # DSPy prompt optimization (Level 3 learning)
+    dspy_enabled: bool = False
+    dspy_min_training_pairs: int = 30
+
+    # Gap detection (Level 4 learning)
+    gap_detection_min_cluster: int = 3
+    gap_detection_similarity_threshold: float = 0.7
+
+    # Authority snapshots
+    authority_snapshot_dir: str = "/app/data/authority_snapshots"
+
     # OETP MySQL database (readonly)
     oetp_db_host: str = "185.187.73.44"
     oetp_db_port: int = 3307

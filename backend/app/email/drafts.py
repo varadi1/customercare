@@ -92,6 +92,10 @@ async def create_reply_draft(
     reply_to_message_id: str,
     body_html: str,
     confidence: str = "medium",
+    top_chunks: list[dict] | None = None,
+    category: str = "",
+    sender_name: str = "",
+    sender_email: str = "",
 ) -> DraftResult:
     """Create a draft reply in a shared mailbox.
 
@@ -183,6 +187,10 @@ async def create_reply_draft(
             confidence=confidence,
             draft_id=draft_id,
             subject=subject,
+            top_chunks=top_chunks,
+            category=category,
+            sender_name=sender_name,
+            sender_email=sender_email,
         )
         print(f"[drafts] Saved to draft store: {subject[:40]}...")
     except Exception as e:

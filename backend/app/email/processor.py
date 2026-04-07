@@ -228,11 +228,19 @@ async def _process_single_email(msg) -> dict[str, Any]:
 
     # Step 8: Save draft to Outlook (clean — NO debug block)
     try:
+        top_chunk_meta = [
+            {"id": r.get("id", ""), "score": round(r.get("score", 0), 4), "chunk_type": r.get("chunk_type", "")}
+            for r in ctx.get("rag_results", [])[:5]
+        ]
         draft_saved = await drafts.create_reply_draft(
             mailbox=msg.mailbox,
             reply_to_message_id=msg.id,
             body_html=draft_result["body_html"],
             confidence=confidence,
+            top_chunks=top_chunk_meta,
+            category=ctx.get("category", ""),
+            sender_name=msg.sender,
+            sender_email=msg.sender_email,
         )
         result["status"] = "draft_created"
         result["draft_id"] = draft_saved.draft_id if draft_saved else None

@@ -595,6 +595,24 @@ def _get_draft_system_prompt() -> str:
     return get_prompt("draft_generate_system", fallback=DRAFT_GENERATE_SYSTEM)
 
 
+def _get_draft_fewshot() -> list[dict]:
+    """Get few-shot examples — from Langfuse if available, otherwise hardcoded.
+
+    Langfuse stores them as a JSON prompt named 'draft_generate_fewshot'.
+    Format: JSON array of {role, content} message dicts.
+    """
+    from .observability import get_prompt
+    raw = get_prompt("draft_generate_fewshot", fallback="")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list) and len(parsed) >= 2:
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return DRAFT_GENERATE_FEWSHOT
+
+
 def _strip_enrichment_prefix(text: str) -> str:
     """Remove contextual enrichment prefix from chunk text.
 
@@ -1197,7 +1215,7 @@ Tárgy: {req.email_subject}
 
     messages = [
         {"role": "system", "content": _get_draft_system_prompt()},
-        *DRAFT_GENERATE_FEWSHOT,
+        *_get_draft_fewshot(),
         {"role": "user", "content": user_msg},
     ]
 

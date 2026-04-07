@@ -1,0 +1,6 @@
+# Requirements for reranker fine-tuning (runs on macOS, not in Docker)
+# Install: pip install -r requirements-finetune.txt
+
+sentence-transformers>=3.0.0
+FlagEmbedding>=1.2.0
+torch>=2.0.0

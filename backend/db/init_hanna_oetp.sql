@@ -118,6 +118,31 @@ CREATE INDEX IF NOT EXISTS idx_traces_created ON reasoning_traces(created_at DES
 CREATE INDEX IF NOT EXISTS idx_traces_email ON reasoning_traces(email_message_id);
 CREATE INDEX IF NOT EXISTS idx_traces_embedding ON reasoning_traces USING hnsw (query_embedding vector_cosine_ops);
 
+-- Feedback analytics (learning from draft-vs-sent differences)
+CREATE TABLE IF NOT EXISTS feedback_analytics (
+    id SERIAL PRIMARY KEY,
+    trace_id INT REFERENCES reasoning_traces(id),
+    change_types TEXT[],
+    lesson TEXT,
+    added_content TEXT,
+    removed_content TEXT,
+    chunk_survival JSONB DEFAULT '[]',
+    gap_topics TEXT[],
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_fa_trace ON feedback_analytics(trace_id);
+CREATE INDEX IF NOT EXISTS idx_fa_change_types ON feedback_analytics USING gin(change_types);
+CREATE INDEX IF NOT EXISTS idx_fa_created ON feedback_analytics(created_at DESC);
+
+-- Chunk survival tracking columns
+DO $$ BEGIN
+    ALTER TABLE chunks ADD COLUMN IF NOT EXISTS survival_rate FLOAT DEFAULT NULL;
+    ALTER TABLE chunks ADD COLUMN IF NOT EXISTS survival_count INT DEFAULT 0;
+    ALTER TABLE chunks ADD COLUMN IF NOT EXISTS appearance_count INT DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_chunks_survival ON chunks(survival_rate) WHERE survival_rate IS NOT NULL;
+
 -- Canonical entities (cross-RAG)
 CREATE TABLE IF NOT EXISTS canonical_entities (
     id SERIAL PRIMARY KEY,
