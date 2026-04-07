@@ -25,6 +25,12 @@ _GREETING_PATTERNS = [
     re.compile(r"[Kk]öszönöm[,:]?\s+(.+)", re.IGNORECASE),
 ]
 
+# Lines that are greetings/salutations — NOT sender's signature
+_SALUTATION_PATTERN = re.compile(
+    r"^(Tisztelt|Kedves|Jó napot|Üdvözlöm|Szia)\s",
+    re.IGNORECASE,
+)
+
 # Company suffixes — if sender_name contains these, it's a company not a person
 _COMPANY_SUFFIXES = [
     "kft", "kft.", "bt", "bt.", "zrt", "zrt.", "nyrt", "nyrt.",
@@ -61,6 +67,21 @@ _ROLE_WORDS = {
     "munkatárs", "asszisztens", "titkár", "elnök", "tag",
 }
 
+# Known organization names that should NEVER be treated as person names
+_ORGANIZATION_NAMES = {
+    "nemzeti energetikai ügynökség",
+    "nemzeti energetikai",
+    "energetikai ügynökség",
+    "zártkörűen működő részvénytársaság",
+    "zártkörűen működő",
+    "részvénytársaság",
+    "magyar energetikai",
+    "magyar államkincstár",
+    "innovációs és technológiai minisztérium",
+    "nemzeti fejlesztési programiroda",
+    "kormányzati informatikai fejlesztési ügynökség",
+}
+
 
 def extract_name_from_body(email_body: str) -> str | None:
     """Extract sender's real name from email body signature.
@@ -74,7 +95,20 @@ def extract_name_from_body(email_body: str) -> str | None:
     if not email_body:
         return None
 
-    lines = email_body.strip().split("\n")
+    # Strip quoted/forwarded message — only look at the SENDER's own text
+    # Common markers: "--- Eredeti üzenet", "From:", "Feladó:", separator lines
+    raw_lines = email_body.strip().split("\n")
+    lines = []
+    for line in raw_lines:
+        stripped = line.strip()
+        if re.match(r"^-{3,}\s*(Eredeti üzenet|Original Message)", stripped, re.IGNORECASE):
+            break
+        if re.match(r"^(From|Feladó)\s*:", stripped, re.IGNORECASE) and len(lines) > 3:
+            break
+        lines.append(line)
+
+    if not lines:
+        lines = raw_lines  # Fallback: use full body if no marker found
 
     # Strategy 1: Look for "Üdvözlettel, Name" pattern (only in closing area)
     for line in lines[-15:]:
@@ -100,6 +134,9 @@ def extract_name_from_body(email_body: str) -> str | None:
         if not stripped or len(stripped) < 3:
             continue
         if any(p.match(stripped) for p in _SKIP_PATTERNS):
+            continue
+        # Skip salutations ("Tisztelt X!", "Kedves Y!")
+        if _SALUTATION_PATTERN.match(stripped):
             continue
 
         # Check if it looks like a name (possibly with company/role appended)
@@ -147,12 +184,26 @@ def _looks_like_name(text: str) -> bool:
     if any(f" {s}" in f" {text_lower} " or text_lower.endswith(f" {s}") for s in _COMPANY_SUFFIXES):
         return False
 
+    # Should not be a known organization name
+    if text_lower in _ORGANIZATION_NAMES or any(org in text_lower for org in _ORGANIZATION_NAMES):
+        return False
+
     # Should not be a role/title
     if any(w.lower() in _ROLE_WORDS for w in words):
         return False
 
     # Should not contain digits (except in "Dr.")
     if any(c.isdigit() for c in text.replace("Dr.", "")):
+        return False
+
+    # Should not contain "institutional" words (not person names)
+    _INSTITUTIONAL_WORDS = {
+        "ügynökség", "minisztérium", "hivatal", "intézet", "központ",
+        "iroda", "kamara", "szövetség", "alapítvány", "egyesület",
+        "önkormányzat", "hatóság", "bizottság", "tanács", "bank",
+        "biztosító", "energetikai", "fejlesztési", "informatikai",
+    }
+    if any(w.lower() in _INSTITUTIONAL_WORDS for w in words):
         return False
 
     return True
