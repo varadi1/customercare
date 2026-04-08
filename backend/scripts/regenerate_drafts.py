@@ -44,8 +44,51 @@ async def get_hanna_drafts(headers: dict, mailbox: str) -> list[dict]:
             return []
         drafts = resp.json().get("value", [])
 
-    # Return all drafts — the user confirmed all 8 are Hanna's
-    return drafts
+    # Filter: only drafts where the conversation does NOT already have an internal reply
+    # (if colleague already replied, don't regenerate)
+    result = []
+    our_domains = {"neuzrt.hu", "nffku.hu"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for d in drafts:
+            conv_id = d.get("conversationId", "")
+            subj = d.get("subject", "")
+            clean_subj = re.sub(r"^(RE|FW|Fwd):\s*", "", subj, flags=re.IGNORECASE).strip()
+
+            # Check: has a colleague already sent a reply in this conversation?
+            has_colleague_reply = False
+            if clean_subj:
+                params = {
+                    "$search": f'"subject:{clean_subj[:50]}"',
+                    "$top": "20",
+                    "$select": "id,subject,from,isDraft,conversationId,parentFolderId",
+                }
+                resp = await client.get(
+                    f"{GRAPH_BASE}/users/{mailbox}/messages",
+                    headers=headers,
+                    params=params,
+                )
+                if resp.status_code == 200:
+                    for msg in resp.json().get("value", []):
+                        if msg.get("isDraft"):
+                            continue
+                        # Same conversation?
+                        if conv_id and msg.get("conversationId") != conv_id:
+                            continue
+                        sender = msg.get("from", {}).get("emailAddress", {}).get("address", "")
+                        domain = sender.split("@")[-1].lower() if "@" in sender else ""
+                        if domain in our_domains:
+                            has_colleague_reply = True
+                            break
+
+            if has_colleague_reply:
+                logger.info("  Skipping %s — colleague already replied", subj[:50])
+            else:
+                result.append(d)
+
+    logger.info("Filtered: %d drafts to regenerate (skipped %d with colleague reply)",
+                len(result), len(drafts) - len(result))
+    return result
 
 
 async def find_original_email(headers: dict, mailbox: str, conversation_id: str, draft_subject: str) -> dict | None:
