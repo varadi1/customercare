@@ -130,6 +130,7 @@ async def find_original_email(headers: dict, mailbox: str, conversation_id: str,
                             "sender_name": msg.get("from", {}).get("emailAddress", {}).get("name", ""),
                             "sender_email": sender_email,
                             "body_text": _html_to_text(msg.get("body", {}).get("content", "")),
+                            "body_html": msg.get("body", {}).get("content", ""),
                         }
 
                 # If no conversation match, try any external sender with matching subject
@@ -145,6 +146,7 @@ async def find_original_email(headers: dict, mailbox: str, conversation_id: str,
                             "sender_name": msg.get("from", {}).get("emailAddress", {}).get("name", ""),
                             "sender_email": sender_email,
                             "body_text": _html_to_text(msg.get("body", {}).get("content", "")),
+                            "body_html": msg.get("body", {}).get("content", ""),
                         }
 
     return None
@@ -240,6 +242,22 @@ async def regenerate_draft(
         # Step 3: Extract the quoted thread from the new reply draft
         new_draft_body = new_draft.get("body", {}).get("content", "")
         quoted_thread = _extract_quoted_thread(new_draft_body)
+
+        # If createReply didn't produce a thread, build one manually from the original
+        if not quoted_thread and original.get("body_html"):
+            sender_name = original.get("sender_name", "")
+            sender_email_addr = original.get("sender_email", "")
+            orig_html = original["body_html"]
+            quoted_thread = (
+                f'<hr style="display:inline-block;width:98%">'
+                f'<div id="divRplyFwdMsg" dir="ltr">'
+                f'<font face="Calibri, sans-serif" color="#000000" style="font-size:11pt">'
+                f'<b>From:</b> {sender_name} &lt;{sender_email_addr}&gt;<br>'
+                f'<b>Subject:</b> {original.get("subject", "")}</font>'
+                f'<div>&nbsp;</div>'
+                f'{orig_html}'
+                f'</div>'
+            )
 
         # Step 4: Update the body with Hanna's response + preserved thread
         combined_body = new_body_html + quoted_thread
