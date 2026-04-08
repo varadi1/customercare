@@ -1266,10 +1266,25 @@ Tárgy: {req.email_subject}
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
             raw = raw.rsplit("```", 1)[0].strip()
-        # Fix common LLM JSON errors: trailing comma before }
-        raw = re.sub(r",\s*}", "}", raw)
-        raw = re.sub(r",\s*]", "]", raw)
-        draft_data = json.loads(raw)
+        # Fix common LLM JSON errors
+        raw = re.sub(r",\s*}", "}", raw)       # trailing comma before }
+        raw = re.sub(r",\s*]", "]", raw)       # trailing comma before ]
+        # Fix unescaped newlines inside JSON string values
+        # (LLM sometimes puts literal \n inside "body": "..." values)
+        raw = re.sub(r'(?<!\\)\n', '\\n', raw)
+        # Fix unescaped quotes inside string values (common with Hungarian text)
+        # Strategy: try parsing, if it fails try json_repair
+        try:
+            draft_data = json.loads(raw)
+        except json.JSONDecodeError:
+            try:
+                import json_repair
+                draft_data = json_repair.loads(raw)
+                print(f"[hanna] JSON repaired successfully (provider={llm_provider})")
+            except Exception:
+                # Last resort: log and re-raise
+                print(f"[hanna] RAW LLM OUTPUT (failed to parse): {raw[:500]}")
+                raise
 
         # Langfuse: log LLM call
         lf_trace.llm(model=llm_model, provider=llm_provider)
