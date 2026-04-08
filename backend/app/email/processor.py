@@ -26,6 +26,47 @@ from .attachments import list_attachments, analyze_email_attachments
 
 logger = logging.getLogger(__name__)
 
+INTERNAL_DOMAINS = {"neuzrt.hu", "nffku.hu", "nffku.onmicrosoft.com", "norvegalap.hu"}
+GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+
+
+async def _check_colleague_replied(mailbox: str, conversation_id: str, subject: str) -> bool:
+    """Check if a colleague has already replied in this conversation.
+
+    Searches Sent Items for messages from internal domains in the same
+    conversation thread. Fast: single Graph API call.
+    """
+    import re
+    from .auth import get_auth_headers
+
+    headers = get_auth_headers()
+    clean_subject = re.sub(r"^(RE|FW|Fwd):\s*", "", (subject or ""), flags=re.IGNORECASE).strip()
+
+    if not clean_subject:
+        return False
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{GRAPH_BASE}/users/{mailbox}/mailFolders/SentItems/messages",
+            headers=headers,
+            params={
+                "$search": f'"subject:{clean_subject[:50]}"',
+                "$top": "5",
+                "$select": "id,conversationId,from",
+            },
+        )
+        if resp.status_code != 200:
+            return False
+
+        for msg in resp.json().get("value", []):
+            if msg.get("conversationId") == conversation_id:
+                sender = msg.get("from", {}).get("emailAddress", {}).get("address", "")
+                domain = sender.split("@")[-1].lower() if "@" in sender else ""
+                if domain in INTERNAL_DOMAINS:
+                    return True
+
+    return False
+
 
 async def process_new_emails(hours: float = 4) -> dict[str, Any]:
     """Complete autonomous email processing pipeline.
@@ -135,7 +176,6 @@ async def _process_single_email(msg) -> dict[str, Any]:
     }
 
     # Step 0: Skip internal emails — no draft needed for colleague-to-colleague
-    INTERNAL_DOMAINS = {"neuzrt.hu", "nffku.hu", "nffku.onmicrosoft.com", "norvegalap.hu"}
     sender_domain = (msg.sender_email or "").lower().split("@")[-1]
     if sender_domain in INTERNAL_DOMAINS:
         result["status"] = "skipped"
@@ -154,6 +194,17 @@ async def _process_single_email(msg) -> dict[str, Any]:
         result["status"] = "skipped"
         result["skip_reason"] = "already_processed"
         return result
+
+    # Step 2b: Check if a colleague has already replied in this conversation
+    if msg.conversation_id and msg.mailbox:
+        try:
+            already_answered = await _check_colleague_replied(msg.mailbox, msg.conversation_id, msg.subject)
+            if already_answered:
+                result["status"] = "skipped"
+                result["skip_reason"] = "colleague_already_replied"
+                return result
+        except Exception as e:
+            logger.debug("Colleague reply check failed (non-blocking): %s", e)
 
     # Step 3: Build draft context (RAG + style + similar traces)
     ctx = await draft_context.build_draft_context(
