@@ -1,0 +1,188 @@
+# =============================================================================
+# CustomerCare — Program Configuration
+# =============================================================================
+# This file defines all domain-specific settings for a CustomerCare instance.
+# To adapt CustomerCare for a new program:
+#   1. Copy this file
+#   2. Fill in program-specific values
+#   3. Set PROGRAM_CONFIG=config/your_program.yaml in .env
+# =============================================================================
+
+program:
+  name: "OETP"
+  full_name: "Otthoni Energiatároló Program"
+  organization: "NEÜ Zrt."
+  language: "hu"
+  description: "Lakossági energiatároló pályázat ügyfélszolgálat"
+
+# --- Scraper: knowledge base source ----------------------------------------
+scraper:
+  enabled: true
+  url: "https://nffku.hu/index.php/tile-detail/otthonienergiatarolo"
+  schedule: "daily 06:15"
+  # CSS selectors for page structure (auto-detected if empty)
+  selectors:
+    accordion_button: "div[data-rlta-element='button']"
+    accordion_heading: "h3[data-rlta-element='heading']"
+    accordion_panel: "div[data-rlta-element='panel']"
+    downloads_table: "table"  # auto-finds table with file links
+
+# --- Document types and authority scores -----------------------------------
+doc_types:
+  felhívás:
+    authority: 0.95
+    keywords: ["felhívás", "felhivas", "módosítás", "modositas"]
+    description: "Pályázati felhívás és módosításai"
+  melléklet:
+    authority: 0.90
+    keywords: ["melléklet", "melleklet", "útmutató", "utmutato", "elszámolhatóság", "ajánlás"]
+    description: "Pályázati mellékletek, útmutatók"
+  közlemény:
+    authority: 0.85
+    keywords: ["tájékoztató", "tajekoztato", "közlemény", "kozlemeny", "kivitelező", "regisztráció"]
+    description: "Hivatalos közlemények, tájékoztatók"
+  gyik:
+    authority: 0.80
+    keywords: ["gyik", "gyakran"]
+    description: "Gyakran ismételt kérdések"
+  segédlet:
+    authority: 0.75
+    keywords: ["segédlet", "segedlet", "kitöltési", "meghatalmazás", "meghatalmazas"]
+    description: "Segédletek, kitöltési útmutatók"
+  dokumentum:
+    authority: 0.60
+    keywords: []
+    description: "Egyéb dokumentumok"
+  email_reply:
+    authority: 0.40
+    keywords: []
+    description: "Korábbi email válaszok"
+  email_question:
+    authority: 0.35
+    keywords: []
+    description: "Beérkezett kérdések"
+
+# --- Email processing ------------------------------------------------------
+email:
+  # Skip these sender domains (internal emails)
+  skip_domains:
+    - "neuzrt.hu"
+    - "nffku.hu"
+
+  # Skip patterns in subject/body
+  skip_patterns:
+    - "automatikus válasz"
+    - "automatic reply"
+    - "out of office"
+    - "házon kívül"
+
+  # Greeting: how to address the customer
+  greeting:
+    default: "Tisztelt Pályázó!"
+    company_sender: "Tisztelt Partnerünk!"
+    # Name order: "hu" = family first, "en" = given first
+    name_order: "hu"
+
+  # Signature block appended to every draft
+  signature: |
+    Üdvözlettel,
+    NEÜ Zrt.
+    Lakossági Energiatároló Program
+    E-mail: lakossagitarolo@neuzrt.hu
+    Telefon: +36 1 755 5938
+
+  # Self-referencing prevention: never suggest writing to this address
+  own_email: "lakossagitarolo@neuzrt.hu"
+
+# --- LLM configuration -----------------------------------------------------
+llm:
+  # Provider priority: try in order, 2 retries each
+  providers:
+    - model: "claude-opus-4-6-20250415"
+      provider: "anthropic"
+    - model: "gpt-5.4"
+      provider: "openai"
+    - model: "gemini-flash-latest"
+      provider: "google"
+
+  # System prompt template (use {program_name}, {organization} placeholders)
+  system_prompt: |
+    Te a {organization} ügyfélszolgálati asszisztense vagy a {program_name} programhoz.
+    Feladatod, hogy a beérkezett kérdésekre pontos, forrás-hű választ adj.
+
+    Szabályok:
+    - CSAK a megadott forrásokra támaszkodj
+    - Ha nem tudsz válaszolni, jelezd
+    - Ne találj ki információt
+    - Magyar nyelven válaszolj
+    - Hivatkozz a forrásokra [N] jelöléssel
+
+# --- Guardrails (domain-specific safety rules) ------------------------------
+guardrails:
+  # Numerical accuracy: flag if numbers in draft differ from source
+  numerical_check: true
+
+  # Eligibility claims: flag statements about who can/cannot apply
+  eligibility_check: true
+
+  # Legal risk: consult legal RAG for eligibility claims
+  legal_check: true
+  legal_rag_url: "http://localhost:8103"
+
+  # AI-speak detector: flag generic AI phrases
+  ai_speak_check: true
+
+  # Accent guard: flag if Hungarian accents are missing (language-specific)
+  accent_check: true
+  accent_language: "hu"
+
+  # Custom rules (program-specific)
+  custom_rules: []
+
+# --- Verification layers ----------------------------------------------------
+verification:
+  # NLI faithfulness check
+  nli_check: true
+
+  # Chain of Verification (claim-level fact check)
+  cove_check: true
+
+  # Multi-sample consistency (SelfCheck)
+  selfcheck: true
+  selfcheck_samples: 3
+
+  # Answer-Question alignment (echo/irrelevant detection)
+  alignment_check: true
+
+# --- Knowledge Graph --------------------------------------------------------
+kg:
+  # Inline extraction during ingest (requires OPENAI_API_KEY)
+  inline_extraction: true
+  extraction_model: "gpt-4o-mini"
+
+  # Entity types to extract
+  entity_types:
+    - fogalom      # concepts
+    - feltétel     # conditions/requirements
+    - program      # program names
+    - munkálat_tipus  # work types
+    - szereplő     # actors/roles
+    - jogszabály   # legal references
+    - dokumentum   # document references
+
+# --- Learning system --------------------------------------------------------
+learning:
+  # L1: Feedback analytics (draft vs sent comparison)
+  feedback_enabled: true
+
+  # L2: Authority learning (weekly)
+  authority_learning: true
+
+  # L3: DSPy prompt optimization (manual)
+  dspy_enabled: false
+
+  # L4: Gap detection (weekly)
+  gap_detection: true
+
+  # L5: Reranker fine-tuning (manual)
+  reranker_finetuning: false

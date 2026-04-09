@@ -1,0 +1,91 @@
+# =============================================================================
+# CustomerCare — Example Program Configuration
+# =============================================================================
+# Template for setting up a new CustomerCare instance.
+# Copy this file and customize for your program.
+#
+#   cp config/program.example.yaml config/program.yaml
+# =============================================================================
+
+program:
+  name: "MyProgram"
+  full_name: "My Customer Service Program"
+  organization: "My Organization"
+  language: "hu"  # hu, en, de, etc.
+  description: "Short description of what this program does"
+
+scraper:
+  enabled: false  # Set true and configure URL to auto-scrape
+  url: ""
+  schedule: "daily 06:15"
+  selectors: {}
+
+doc_types:
+  announcement:
+    authority: 0.95
+    keywords: ["announcement", "notice"]
+    description: "Official announcements"
+  faq:
+    authority: 0.80
+    keywords: ["faq", "frequently asked"]
+    description: "Frequently asked questions"
+  document:
+    authority: 0.60
+    keywords: []
+    description: "General documents"
+  email_reply:
+    authority: 0.40
+    keywords: []
+    description: "Previous email responses"
+
+email:
+  skip_domains:
+    - "myorg.com"
+  skip_patterns:
+    - "automatic reply"
+    - "out of office"
+  greeting:
+    default: "Dear Customer,"
+    company_sender: "Dear Partner,"
+    name_order: "en"
+  signature: |
+    Best regards,
+    My Organization
+    Customer Service
+  own_email: "support@myorg.com"
+
+llm:
+  providers:
+    - model: "claude-opus-4-6-20250415"
+      provider: "anthropic"
+    - model: "gpt-5.4"
+      provider: "openai"
+  system_prompt: |
+    You are a customer service assistant for {organization} ({program_name}).
+    Answer questions accurately based only on the provided sources.
+    If you cannot answer, say so. Never make up information.
+
+guardrails:
+  numerical_check: true
+  eligibility_check: false
+  legal_check: false
+  ai_speak_check: true
+  accent_check: false
+  custom_rules: []
+
+verification:
+  nli_check: true
+  cove_check: true
+  selfcheck: true
+  alignment_check: true
+
+kg:
+  inline_extraction: true
+  extraction_model: "gpt-4o-mini"
+
+learning:
+  feedback_enabled: true
+  authority_learning: true
+  dspy_enabled: false
+  gap_detection: true
+  reranker_finetuning: false
