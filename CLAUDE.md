@@ -18,16 +18,16 @@ cd backend && python3 -m pytest tests/ -v                        # Unit tests
 cd backend && ../.venv-eval/bin/python -m pytest tests/test_deepeval.py -v  # DeepEval quality (needs OPENAI_API_KEY)
 
 # Evaluation
-docker exec hanna-backend python3 /app/scripts/eval_live.py --limit 20 --report    # Live email eval
+docker exec cc-backend python3 /app/scripts/eval_live.py --limit 20 --report    # Live email eval
 ../.venv-eval/bin/python scripts/eval_ragas_weekly.py --limit 30 --report           # RAGAS batch eval
 
 # Ingest
-docker exec hanna-backend python3 /app/scripts/bulk_ingest_sent.py --from 2026-02-02 --to 2026-04-07
-docker exec hanna-backend python3 /app/scripts/ingest_subfolders.py --limit 500
-docker exec hanna-backend python3 /app/scripts/scrape_nffku_oetp.py
+docker exec cc-backend python3 /app/scripts/bulk_ingest_sent.py --from 2026-02-02 --to 2026-04-07
+docker exec cc-backend python3 /app/scripts/ingest_subfolders.py --limit 500
+docker exec cc-backend python3 /app/scripts/scrape_nffku_oetp.py
 
 # Logs & monitoring
-docker logs -f hanna-backend
+docker logs -f cc-backend
 bash scripts/healthcheck_discord.sh    # Manual health check
 ```
 
@@ -37,9 +37,9 @@ bash scripts/healthcheck_discord.sh    # Manual health check
 
 | Service | Port | Container | Runtime |
 |---------|------|-----------|---------|
-| **Hanna Backend** (FastAPI) | 8101 | hanna-backend | Docker |
-| **Hanna DB** (PostgreSQL+pgvector) | 5438 | hanna-db | Docker |
-| **Langfuse** (observability) | 3001 | hanna-langfuse | Docker |
+| **Hanna Backend** (FastAPI) | 8101 | cc-backend | Docker |
+| **Hanna DB** (PostgreSQL+pgvector) | 5438 | cc-db | Docker |
+| **Langfuse** (observability) | 3001 | cc-langfuse | Docker |
 | **BGE-M3 Embedding** (search) | 8104 | — | macOS LaunchAgent, MPS GPU |
 | **BGE-M3 Embedding** (ingest) | 8114 | — | macOS LaunchAgent, MPS GPU |
 | **BGE Reranker v2-m3** | 8102 | — | macOS LaunchAgent, MPS GPU |
@@ -68,9 +68,9 @@ Email → Skip filter (auto-reply, internal @neuzrt.hu, thank-you)
       → Confidence routing (low → "Hanna - emberi válasz kell")
 ```
 
-### Database (hanna-db, PostgreSQL+pgvector :5438)
+### Database (cc-db, PostgreSQL+pgvector :5438)
 
-**Database**: `hanna_oetp` (own container, init script: `backend/db/init_hanna_oetp.sql`)
+**Database**: `customercare` (own container, init script: `backend/db/init_customercare.sql`)
 
 Tables:
 - `chunks` — RAG knowledge base (~1400 chunks, 1024-dim BGE-M3 embeddings, Hungarian tsvector, survival_rate)
@@ -130,12 +130,12 @@ backend/tests/
 ├── test_deepeval.py     # DeepEval: faithfulness + relevancy (25 golden set entries)
 ├── promptfoo/promptfooconfig.yaml  # Red-teaming: 12 adversarial tests
 backend/db/
-└── init_hanna_oetp.sql  # DB schema (auto-runs on container creation)
+└── init_customercare.sql  # DB schema (auto-runs on container creation)
 ```
 
 ## Key Design Decisions
 
-- **Standalone DB** — `hanna-db` container with own pgvector volume. Init script ensures DB survives rebuilds.
+- **Standalone DB** — `cc-db` container with own pgvector volume. Init script ensures DB survives rebuilds.
 - **Opus 4.6 primary** — Best instruction following for Hungarian customer service. Fallback: GPT-5.4, then Gemini.
 - **Depersonalized RAG** — Email chunks have PII removed (names, OETP IDs, emails, phones → placeholders). Prevents name confusion and OETP ID leakage in drafts.
 - **Skip over bad draft** — If Hanna can't answer properly (echo, irrelevant, insufficient), it skips instead of generating a bad draft. Better no draft than wrong draft.
@@ -191,7 +191,7 @@ Manual (quarterly) → finetune_reranker.py
 
 All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
 
-- `HANNA_PG_DSN` — PostgreSQL connection (default: `postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp`)
+- `HANNA_PG_DSN` — PostgreSQL connection (default: `postgresql://klara:klara_docs_2026@cc-db:5432/customercare`)
 - `AUTO_PROCESS_ENABLED` — Autonomous email processing (default: false)
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` — LLM providers
 - `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` — MS Graph API

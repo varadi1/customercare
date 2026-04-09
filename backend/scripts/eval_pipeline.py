@@ -4,11 +4,11 @@
 Fetches sent emails, extracts the original question (from quoted thread),
 sends it to Hanna's /draft/generate, and compares the draft to the actual answer.
 
-Usage (inside hanna-backend container):
+Usage (inside cc-backend container):
     python3 /app/scripts/eval_pipeline.py --limit 250 [--dry-run] [--output /app/data/eval_results.json]
 
 Or from host:
-    docker exec hanna-backend python3 /app/scripts/eval_pipeline.py --limit 250
+    docker exec cc-backend python3 /app/scripts/eval_pipeline.py --limit 250
 """
 
 from __future__ import annotations

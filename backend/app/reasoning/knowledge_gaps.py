@@ -20,7 +20,7 @@ import asyncpg
 logger = logging.getLogger(__name__)
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 
 async def generate_gap_report(days: int = 7) -> dict[str, Any]:

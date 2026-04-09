@@ -2,7 +2,7 @@
 
 Provides endpoints to search and retrieve entities from the unified
 cross_rag database, which links entities across jogszabaly_rag, neu_docs,
-obsidian_rag, uae_legal_rag, and hanna_oetp.
+obsidian_rag, uae_legal_rag, and customercare.
 """
 
 from __future__ import annotations

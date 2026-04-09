@@ -1,7 +1,7 @@
 """Hybrid search: semantic (PostgreSQL+pgvector) + BM25 keyword → RRF → Cohere rerank.
 
 Migrated from ChromaDB to PostgreSQL+pgvector for OETP knowledge base.
-Database: postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp
+Database: postgresql://klara:klara_docs_2026@host.docker.internal:5433/customercare
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from .query_expansion import expand_query, expand_query_async
 # PostgreSQL connection pool
 _pool: Optional[asyncpg.Pool] = None
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -504,7 +504,7 @@ async def _get_collection_stats_async() -> dict:
         return {
             "total_chunks": total,
             "storage": "postgresql+pgvector",
-            "database": "hanna_oetp",
+            "database": "customercare",
             "programs": {r["program"]: r["cnt"] for r in programs},
             "doc_types": {r["doc_type"]: r["cnt"] for r in doc_types},
             "reranker": _get_reranker_mode(),

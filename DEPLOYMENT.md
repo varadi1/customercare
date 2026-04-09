@@ -26,7 +26,7 @@ cp .env.example .env
 bash infra/install.sh
 
 # 4. Első ingest
-docker exec hanna-backend python3 /app/scripts/scrape_nffku_oetp.py
+docker exec cc-backend python3 /app/scripts/scrape_nffku_oetp.py
 ```
 
 ## Részletes Telepítés
@@ -65,10 +65,10 @@ Az `install.sh` automatikusan elindítja:
 
 | Service | Container | Port | Leírás |
 |---------|-----------|------|--------|
-| PostgreSQL + pgvector | hanna-db | 5438 | RAG tudásbázis + KG |
-| FastAPI backend | hanna-backend | 8101 | API + email pipeline |
-| Langfuse | hanna-langfuse | 3001 | Observability |
-| Langfuse DB | hanna-langfuse-db | — | Langfuse PostgreSQL |
+| PostgreSQL + pgvector | cc-db | 5438 | RAG tudásbázis + KG |
+| FastAPI backend | cc-backend | 8101 | API + email pipeline |
+| Langfuse | cc-langfuse | 3001 | Observability |
+| Langfuse DB | cc-langfuse-db | — | Langfuse PostgreSQL |
 
 ```bash
 # Manuális indítás
@@ -78,7 +78,7 @@ docker compose up -d
 docker compose up -d --build backend
 
 # Logok
-docker logs -f hanna-backend
+docker logs -f cc-backend
 ```
 
 ### 3. Natív GPU Szolgáltatások
@@ -129,13 +129,13 @@ curl http://localhost:8102/health   # Reranker
 
 ```bash
 # NFFKU OETP oldal scrapelése + ingest
-docker exec hanna-backend python3 /app/scripts/scrape_nffku_oetp.py
+docker exec cc-backend python3 /app/scripts/scrape_nffku_oetp.py
 
 # Email history bulk ingest
-docker exec hanna-backend python3 /app/scripts/bulk_ingest_sent.py --from 2026-02-02 --to 2026-04-07
+docker exec cc-backend python3 /app/scripts/bulk_ingest_sent.py --from 2026-02-02 --to 2026-04-07
 
 # Inbox subfolder ingest
-docker exec hanna-backend python3 /app/scripts/ingest_subfolders.py --limit 500
+docker exec cc-backend python3 /app/scripts/ingest_subfolders.py --limit 500
 ```
 
 ## Automatikus Folyamatok
@@ -172,7 +172,7 @@ curl http://host.docker.internal:8104/health
 ### DB connection refused
 ```bash
 # Container állapot
-docker ps -a | grep hanna-db
+docker ps -a | grep cc-db
 
 # Kézi restart
 docker compose restart db

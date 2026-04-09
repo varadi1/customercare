@@ -13,8 +13,8 @@ STATE_FILE="/tmp/hanna_healthcheck_state"
 # Services: name|check_type|url_or_cmd|restart_cmd
 # check_type: http = curl, docker = docker healthcheck, process = kill pattern
 SERVICES=(
-    "Hanna-DB|docker|hanna-db|docker restart hanna-db"
-    "Hanna-backend|http|http://localhost:8101/livez|docker restart hanna-backend"
+    "Hanna-DB|docker|cc-db|docker restart cc-db"
+    "Hanna-backend|http|http://localhost:8101/livez|docker restart cc-backend"
     "BGE-M3-search|http|http://localhost:8104/health|kill:bge_m3/app.py"
     "BGE-M3-ingest|http|http://localhost:8114/health|kill:bge_m3_ingest/app.py"
     "Reranker|http|http://localhost:8102/health|kill:uvicorn main:app.*--port 8102"
@@ -63,10 +63,10 @@ restart_service() {
     fi
 }
 
-# ── DB-specific check: verify hanna_oetp database exists ──
+# ── DB-specific check: verify customercare database exists ──
 check_db_data() {
     local count
-    count=$(docker exec hanna-db psql -U klara -d hanna_oetp -t -c "SELECT COUNT(*) FROM chunks;" 2>/dev/null | tr -d ' ')
+    count=$(docker exec cc-db psql -U klara -d customercare -t -c "SELECT COUNT(*) FROM chunks;" 2>/dev/null | tr -d ' ')
     if [ -z "$count" ] || [ "$count" = "0" ]; then
         return 1
     fi
@@ -134,7 +134,7 @@ if curl -sf --max-time 5 "http://localhost:8101/livez" >/dev/null 2>&1; then
         NEW_STATE="${NEW_STATE}Backend-DB-conn=down\n"
         if [ "$db_conn_prev" != "down" ]; then
             send_discord "🚨 **Backend→DB kapcsolat** — Backend fut, de 0 chunk! DB elérhetetlen? → backend restart"
-            docker restart hanna-backend 2>/dev/null
+            docker restart cc-backend 2>/dev/null
         fi
     fi
 fi

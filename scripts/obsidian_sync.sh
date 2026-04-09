@@ -4,7 +4,7 @@
 # Ensures Docker + container are running before triggering ingest
 
 LOG="/tmp/obsidian-daily-sync.log"
-CONTAINER="hanna-backend"
+CONTAINER="cc-backend"
 API_URL="http://localhost:8101"
 MAX_RETRIES=3
 
@@ -32,7 +32,7 @@ if ! /usr/local/bin/docker info >/dev/null 2>&1; then
     fi
 fi
 
-# 2. Check if hanna-backend container is running
+# 2. Check if cc-backend container is running
 STATUS=$(/usr/local/bin/docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)
 if [ "$STATUS" != "running" ]; then
     log "WARNING: Container $CONTAINER is '$STATUS'. Starting it..."

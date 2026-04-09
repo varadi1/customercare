@@ -3,7 +3,7 @@
 Safe to re-run (IF NOT EXISTS). Usage: python3 scripts/migrate_reasoning.py"""
 import asyncio, asyncpg
 
-PG_DSN = "postgresql://klara:klara_docs_2026@localhost:5433/hanna_oetp"
+PG_DSN = "postgresql://klara:klara_docs_2026@localhost:5433/customercare"
 
 async def migrate():
     conn = await asyncpg.connect(PG_DSN)

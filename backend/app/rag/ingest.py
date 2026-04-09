@@ -1,7 +1,7 @@
 """Document ingestion — chunk, embed, store in PostgreSQL+pgvector.
 
 Migrated from ChromaDB to PostgreSQL for OETP knowledge base.
-Database: postgresql://klara:klara_docs_2026@host.docker.internal:5433/hanna_oetp
+Database: postgresql://klara:klara_docs_2026@host.docker.internal:5433/customercare
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .contextual import enrich_chunk
 from .kg_extract import extract_and_store as kg_extract_chunk
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 # chunk_type → doc_type mapping (legacy ChromaDB names → PostgreSQL)
 DOC_TYPE_MAP = {

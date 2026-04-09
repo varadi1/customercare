@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Scrape OETP közlemények + letölthető dokumentumok from nffku.hu.
 
-Downloads PDFs and ingests them into hanna_oetp RAG.
-Run inside hanna-backend container:
+Downloads PDFs and ingests them into customercare RAG.
+Run inside cc-backend container:
     python3 /app/scripts/scrape_nffku_oetp.py [--dry-run] [--download-dir /app/data/pdfs]
 """
 
@@ -195,7 +195,7 @@ def download_file(client: httpx.Client, url: str, download_dir: Path) -> Path | 
 
 
 def ingest_pdf(path: Path, chunk_type: str, valid_from: str | None = None) -> int:
-    """Ingest a PDF file into hanna_oetp."""
+    """Ingest a PDF file into customercare."""
     from app.rag.ingest import ingest_pdf as _ingest_pdf
 
     try:
@@ -214,7 +214,7 @@ def ingest_pdf(path: Path, chunk_type: str, valid_from: str | None = None) -> in
 
 
 def ingest_text_content(text: str, source: str, chunk_type: str, valid_from: str | None = None) -> int:
-    """Ingest text content into hanna_oetp."""
+    """Ingest text content into customercare."""
     from app.rag.ingest import ingest_text as _ingest_text
 
     if len(text.strip()) < 50:

@@ -23,7 +23,7 @@ import sys
 
 import asyncpg
 
-PG_DSN = "postgresql://klara:klara_docs_2026@localhost:5433/hanna_oetp"
+PG_DSN = "postgresql://klara:klara_docs_2026@localhost:5433/customercare"
 
 MIN_NAME_LENGTH = 4
 

@@ -1070,7 +1070,7 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
         if req.sender_email:
             import asyncpg as _apg
             _econn = await _apg.connect(
-                os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+                os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
             )
             try:
                 from app.reasoning.person_tracker import process_email_entities
@@ -1754,7 +1754,7 @@ async def bm25_rebuild():
     try:
         import asyncpg
         pool = await asyncpg.create_pool(
-            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp"),
+            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare"),
             min_size=1, max_size=3,
         )
         async with pool.acquire() as conn:

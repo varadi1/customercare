@@ -66,7 +66,7 @@ fi
 # --- 3. Docker services ---
 echo ""
 echo "[3/7] Docker Services"
-for svc in hanna-db hanna-backend hanna-langfuse; do
+for svc in cc-db cc-backend cc-langfuse; do
     state=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
     if [ "$state" = "running" ]; then
         ok "$svc running"
@@ -100,16 +100,16 @@ echo ""
 echo "[5/7] Database"
 
 # PostgreSQL via Docker
-if docker exec hanna-db pg_isready -U klara -d hanna_oetp &>/dev/null 2>&1; then
-    ok "hanna_oetp DB ready"
-    chunk_count=$(docker exec hanna-db psql -U klara -d hanna_oetp -t -c "SELECT count(*) FROM chunks" 2>/dev/null | tr -d ' ')
+if docker exec cc-db pg_isready -U klara -d customercare &>/dev/null 2>&1; then
+    ok "customercare DB ready"
+    chunk_count=$(docker exec cc-db psql -U klara -d customercare -t -c "SELECT count(*) FROM chunks" 2>/dev/null | tr -d ' ')
     if [ -n "$chunk_count" ] && [ "$chunk_count" -gt 0 ] 2>/dev/null; then
         ok "chunks table: $chunk_count entries"
     else
         warn "chunks table empty (run scraper/ingest)"
     fi
 else
-    warn "hanna_oetp DB not reachable (container down?)"
+    warn "customercare DB not reachable (container down?)"
 fi
 
 # --- 6. Service directories ---

@@ -128,19 +128,19 @@ def trigger_ingest():
     import subprocess
 
     try:
-        # Check if hanna-backend container is running
+        # Check if cc-backend container is running
         result = subprocess.run(
-            ["docker", "inspect", "-f", "{{.State.Running}}", "hanna-backend"],
+            ["docker", "inspect", "-f", "{{.State.Running}}", "cc-backend"],
             capture_output=True, text=True, timeout=10,
         )
         if result.stdout.strip() != "true":
-            print("WARNING: hanna-backend container is not running, skipping ingest")
+            print("WARNING: cc-backend container is not running, skipping ingest")
             return False
 
         # Run the scraper inside the container (downloads + ingests)
-        print("Running scraper+ingest in hanna-backend container...")
+        print("Running scraper+ingest in cc-backend container...")
         result = subprocess.run(
-            ["docker", "exec", "hanna-backend", "python3", "/app/scripts/scrape_nffku_oetp.py"],
+            ["docker", "exec", "cc-backend", "python3", "/app/scripts/scrape_nffku_oetp.py"],
             capture_output=True, text=True, timeout=600,
         )
         print(result.stdout)

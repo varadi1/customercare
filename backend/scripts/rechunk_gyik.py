@@ -6,7 +6,7 @@ The OEPT_GYIK_20260204.pdf contains 28 numbered Q&A pairs across 2 sections:
 - Section B (Q1-11): Műszaki/inverter kérdések (page 6+)
 
 Usage:
-    docker exec hanna-backend python3 /app/scripts/rechunk_gyik.py [--dry-run]
+    docker exec cc-backend python3 /app/scripts/rechunk_gyik.py [--dry-run]
 """
 
 import asyncio
@@ -20,7 +20,7 @@ import asyncpg
 import fitz
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 GYIK_PDF = "/app/data/pdfs/OEPT_GYIK_20260204.pdf"
 GYIK_DOC_ID = "OEPT_GYIK_20260204.pdf"
 DRY_RUN = "--dry-run" in sys.argv

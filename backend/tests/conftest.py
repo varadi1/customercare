@@ -1,7 +1,7 @@
 """Shared test fixtures — real PostgreSQL with transaction rollback."""
 import asyncio, pytest, asyncpg
 
-PG_DSN = "postgresql://klara:klara_docs_2026@localhost:5433/hanna_oetp"
+PG_DSN = "postgresql://klara:klara_docs_2026@localhost:5433/customercare"
 
 class AsyncDB:
     def __init__(self): self._conn = self._tx = None

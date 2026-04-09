@@ -17,7 +17,7 @@ def _get_langfuse():
 
     pk = os.getenv("LANGFUSE_PUBLIC_KEY", "")
     sk = os.getenv("LANGFUSE_SECRET_KEY", "")
-    host = os.getenv("LANGFUSE_HOST", "http://hanna-langfuse:3000")
+    host = os.getenv("LANGFUSE_HOST", "http://cc-langfuse:3000")
 
     if not pk or not sk:
         _enabled = False

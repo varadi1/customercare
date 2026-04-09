@@ -6,9 +6,9 @@ Fetches each Hanna draft → finds the original email it replies to →
 calls /draft/generate with the original email text → overwrites the draft body.
 
 Usage:
-  docker exec hanna-backend python3 /app/scripts/regenerate_drafts.py
-  docker exec hanna-backend python3 /app/scripts/regenerate_drafts.py --dry-run
-  docker exec hanna-backend python3 /app/scripts/regenerate_drafts.py --mailbox info@neuzrt.hu
+  docker exec cc-backend python3 /app/scripts/regenerate_drafts.py
+  docker exec cc-backend python3 /app/scripts/regenerate_drafts.py --dry-run
+  docker exec cc-backend python3 /app/scripts/regenerate_drafts.py --mailbox info@neuzrt.hu
 """
 import argparse
 import asyncio

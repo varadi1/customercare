@@ -9,13 +9,13 @@ This is the production counterpart to eval_golden_set.py:
 - Golden set: fixed questions, deterministic RAG precision
 - Live eval:  real emails, end-to-end draft quality
 
-Usage (inside hanna-backend container):
+Usage (inside cc-backend container):
     python3 /app/scripts/eval_live.py --limit 50
     python3 /app/scripts/eval_live.py --limit 250 --report
     python3 /app/scripts/eval_live.py --limit 20 --dry-run
 
 Or from host:
-    docker exec hanna-backend python3 /app/scripts/eval_live.py --limit 50
+    docker exec cc-backend python3 /app/scripts/eval_live.py --limit 50
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 -- Hanna OETP RAG Database Schema
 -- Run against PostgreSQL (neu-docs-db, port 5433, user: klara)
--- CREATE DATABASE hanna_oetp OWNER klara;
--- \c hanna_oetp
+-- CREATE DATABASE customercare OWNER klara;
+-- \c customercare
 
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS vector;

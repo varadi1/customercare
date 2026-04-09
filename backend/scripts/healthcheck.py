@@ -1,7 +1,7 @@
 """Hanna OETP RAG healthcheck — napi ellenőrzés.
 
 Usage:
-    docker exec hanna-backend python3 /app/scripts/healthcheck.py
+    docker exec cc-backend python3 /app/scripts/healthcheck.py
     
 Returns JSON with all checks and overall status (ok/warning/critical).
 """
@@ -13,7 +13,7 @@ import sys
 import asyncpg
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 
 async def run_checks():

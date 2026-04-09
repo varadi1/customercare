@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backfill KG extraction for chunks that don't have KG entities yet.
 
-Usage inside hanna-backend container:
+Usage inside cc-backend container:
     python3 /app/scripts/kg_backfill_new.py
     python3 /app/scripts/kg_backfill_new.py --doc-id '%260407%'  # specific doc
 """
@@ -16,7 +16,7 @@ import asyncpg
 
 
 async def main(doc_id_filter: str | None = None):
-    dsn = "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp"
+    dsn = "postgresql://klara:klara_docs_2026@cc-db:5432/customercare"
     pool = await asyncpg.create_pool(dsn, min_size=2, max_size=5)
 
     # Find chunks without KG entities

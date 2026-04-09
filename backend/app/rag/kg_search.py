@@ -12,7 +12,7 @@ import re
 
 # Use the same PostgreSQL connection as search.py
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 # Connection pool (shared with search.py if possible)
 _kg_pool: Optional[asyncpg.Pool] = None

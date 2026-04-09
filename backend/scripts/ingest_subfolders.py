@@ -6,7 +6,7 @@ The folder name provides the topic/category. We ingest each email
 with its topic metadata. Combined with existing sentItems Q&A pairs,
 this gives comprehensive RAG coverage.
 
-Run inside the hanna-backend container:
+Run inside the cc-backend container:
     python3 /app/scripts/ingest_subfolders.py [--dry-run] [--mailbox X] [--limit N]
 """
 
@@ -131,7 +131,7 @@ def get_existing_sources() -> set[str]:
 
     async def _fetch():
         conn = await asyncpg.connect(
-            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
         )
         rows = await conn.fetch(
             "SELECT DISTINCT doc_id FROM chunks WHERE doc_type IN ('email_reply', 'email_question')"

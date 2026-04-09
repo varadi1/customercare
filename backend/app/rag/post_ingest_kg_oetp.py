@@ -11,8 +11,8 @@ Strategy:
 5. Cross-RAG sync
 
 Usage (backfill):
-    docker exec -it hanna-backend python -m app.rag.post_ingest_kg_oetp --backfill
-    docker exec -it hanna-backend python -m app.rag.post_ingest_kg_oetp --backfill --doc-type felhívás
+    docker exec -it cc-backend python -m app.rag.post_ingest_kg_oetp --backfill
+    docker exec -it cc-backend python -m app.rag.post_ingest_kg_oetp --backfill --doc-type felhívás
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from typing import Optional
 import asyncpg
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
+PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 # Jogszabály regex patterns (Hungarian legal references)
 _LAW_PATTERNS = [
@@ -321,7 +321,7 @@ async def _crossrag_sync(pool: asyncpg.Pool, source: str) -> dict:
 
         entities = [dict(r) for r in rows]
         crossrag_pool = await get_crossrag_pool()
-        result = await sync_entities_to_crossrag("hanna_oetp", entities, crossrag_pool)
+        result = await sync_entities_to_crossrag("customercare", entities, crossrag_pool)
         return result
 
     except ImportError:
