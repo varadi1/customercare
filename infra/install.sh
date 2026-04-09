@@ -1,88 +1,165 @@
 #!/bin/bash
-# Hanna — Install script
-# Installs LaunchAgents, builds Docker image, creates .env template
+# =============================================================================
+# Hanna — Full Install Script
+# =============================================================================
+# Sets up everything needed to run Hanna on a new machine:
+#   1. .env from template
+#   2. Native GPU services (BGE-M3 embedding + reranker)
+#   3. LaunchAgents (auto-start services)
+#   4. Docker services (backend + DB + Langfuse)
+#   5. Pre-flight health check
 #
 # Usage: cd ~/DEV/hanna && bash infra/install.sh
+# =============================================================================
 
 set -e
 HANNA_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOCAL_LLM="$(dirname "$HANNA_DIR")/local_llm"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 
-echo "=== Hanna Install ==="
-echo "Directory: $HANNA_DIR"
+echo "============================================"
+echo "  Hanna Install"
+echo "  Directory: $HANNA_DIR"
+echo "============================================"
 echo ""
 
-# 1. .env check
+# ─── 1. .env ─────────────────────────────────────────────────────────────────
+echo "[1/6] Environment"
 if [ ! -f "$HANNA_DIR/.env" ]; then
-    echo "[1/5] Creating .env template..."
-    cat > "$HANNA_DIR/.env" << 'ENVEOF'
-# LLM Providers
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
-GOOGLE_API_KEY=
-COHERE_API_KEY=
-
-# Email (MS Graph API)
-GRAPH_TENANT_ID=
-GRAPH_CLIENT_ID=
-GRAPH_CLIENT_SECRET=
-GRAPH_USER_EMAIL=
-SHARED_MAILBOXES=lakossagitarolo@neuzrt.hu
-
-# OETP MySQL (readonly)
-OETP_DB_PASSWORD=
-OETP_DB_ENABLED=false
-
-# Discord bot
-DISCORD_BOT_TOKEN=
-DISCORD_CHANNEL_ID=
-
-# Autonomous processing
-AUTO_PROCESS_ENABLED=false
-ENVEOF
-    echo "  ⚠️  Fill in .env before starting!"
+    cp "$HANNA_DIR/.env.example" "$HANNA_DIR/.env"
+    echo "  ⚠️  Created .env from template — fill in API keys before starting!"
 else
-    echo "[1/5] .env exists ✅"
+    echo "  ✅ .env exists"
 fi
 
-# 2. Install LaunchAgents
-echo "[2/5] Installing LaunchAgents..."
+# ─── 2. Native GPU services ──────────────────────────────────────────────────
+echo ""
+echo "[2/6] Native GPU Services"
+
+setup_bge_m3() {
+    local dir="$LOCAL_LLM/bge_m3"
+    local ingest_dir="$LOCAL_LLM/bge_m3_ingest"
+
+    if [ -d "$dir" ] && [ -f "$dir/app.py" ]; then
+        echo "  ✅ BGE-M3 search service exists ($dir)"
+    else
+        echo "  📦 Setting up BGE-M3 search service..."
+        mkdir -p "$dir"
+        cp "$HANNA_DIR/infra/gpu_services/bge_m3_app.py" "$dir/app.py" 2>/dev/null || true
+    fi
+
+    if [ -d "$ingest_dir" ] && [ -f "$ingest_dir/app.py" ]; then
+        echo "  ✅ BGE-M3 ingest service exists ($ingest_dir)"
+    else
+        echo "  📦 Setting up BGE-M3 ingest service..."
+        mkdir -p "$ingest_dir"
+        cp "$HANNA_DIR/infra/gpu_services/bge_m3_ingest_app.py" "$ingest_dir/app.py" 2>/dev/null || true
+    fi
+
+    # Create shared venv if missing
+    local venv="$dir/.venv"
+    if [ ! -d "$venv" ] && [ ! -L "$venv" ]; then
+        echo "  📦 Creating BGE-M3 venv..."
+        python3 -m venv "$venv"
+        "$venv/bin/pip" install -q torch fastapi uvicorn sentence-transformers FlagEmbedding numpy
+        echo "  ✅ BGE-M3 venv ready"
+        # Symlink for ingest
+        ln -sf "$venv" "$ingest_dir/.venv" 2>/dev/null || true
+    else
+        echo "  ✅ BGE-M3 venv exists"
+    fi
+}
+
+setup_reranker() {
+    local dir="$LOCAL_LLM/reranker"
+
+    if [ -d "$dir" ] && [ -f "$dir/main.py" ]; then
+        echo "  ✅ Reranker service exists ($dir)"
+    else
+        echo "  📦 Setting up Reranker service..."
+        mkdir -p "$dir"
+        cp "$HANNA_DIR/infra/gpu_services/reranker_main.py" "$dir/main.py" 2>/dev/null || true
+    fi
+
+    local venv="$dir/.venv"
+    if [ ! -d "$venv" ] && [ ! -L "$venv" ]; then
+        echo "  📦 Creating Reranker venv..."
+        python3 -m venv "$venv"
+        "$venv/bin/pip" install -q torch fastapi uvicorn transformers numpy pydantic
+        echo "  ✅ Reranker venv ready"
+    else
+        echo "  ✅ Reranker venv exists"
+    fi
+}
+
+mkdir -p "$LOCAL_LLM"
+setup_bge_m3
+setup_reranker
+
+# ─── 3. LaunchAgents ─────────────────────────────────────────────────────────
+echo ""
+echo "[3/6] LaunchAgents"
+mkdir -p "$PLIST_DIR"
 for plist in "$HANNA_DIR"/infra/*.plist; do
     name=$(basename "$plist")
-    # Update paths in plist to current HANNA_DIR
-    sed "s|/Users/varadiimre/DEV/hanna|$HANNA_DIR|g" "$plist" > "$PLIST_DIR/$name"
+    # Substitute paths for current install location
+    sed \
+        -e "s|/Users/varadiimre/DEV/hanna|$HANNA_DIR|g" \
+        -e "s|/Users/varadiimre/DEV/local_llm|$LOCAL_LLM|g" \
+        -e "s|/Users/varadiimre/.openclaw/jogszabaly-rag/bge_m3_service/.venv|$LOCAL_LLM/bge_m3/.venv|g" \
+        -e "s|/Users/varadiimre/.venv/reranker|$LOCAL_LLM/reranker/.venv|g" \
+        "$plist" > "$PLIST_DIR/$name"
     launchctl unload "$PLIST_DIR/$name" 2>/dev/null || true
-    launchctl load "$PLIST_DIR/$name" 2>/dev/null
+    launchctl load "$PLIST_DIR/$name" 2>/dev/null || true
     echo "  ✅ $name"
 done
 
-# 3. Build Docker image
-echo "[3/5] Building Docker image..."
+# ─── 4. Docker ───────────────────────────────────────────────────────────────
+echo ""
+echo "[4/6] Docker Services"
 cd "$HANNA_DIR"
+
+echo "  Building backend image..."
 docker compose build backend 2>&1 | tail -2
 
-# 4. Python dependencies (for local testing)
-echo "[4/5] Checking Python dependencies..."
-pip3 install pytest pytest-asyncio asyncpg pymysql 2>/dev/null | tail -1
+echo "  Starting services..."
+docker compose up -d 2>&1 | tail -3
 
-# 5. Verify
-echo "[5/5] Verifying..."
-docker compose up -d backend 2>&1 | tail -2
-sleep 8
+echo "  Waiting for health checks..."
+sleep 10
 
-# Health checks
-for port in 8101 8102 8104 8114; do
-    if curl -s --max-time 3 "http://localhost:$port/health" > /dev/null 2>&1; then
-        echo "  ✅ :$port"
-    else
-        echo "  ❌ :$port (not responding)"
+# ─── 5. Model download warmup ────────────────────────────────────────────────
+echo ""
+echo "[5/6] Model Warmup"
+echo "  Waiting for GPU services to load models (first run may take 2-5 min)..."
+
+for attempt in $(seq 1 30); do
+    bge_ok=0; rnk_ok=0
+    curl -s --max-time 3 http://localhost:8104/health >/dev/null 2>&1 && bge_ok=1
+    curl -s --max-time 3 http://localhost:8102/health >/dev/null 2>&1 && rnk_ok=1
+
+    if [ $bge_ok -eq 1 ] && [ $rnk_ok -eq 1 ]; then
+        echo "  ✅ All GPU services ready"
+        break
     fi
+    if [ $attempt -eq 30 ]; then
+        echo "  ⚠️  GPU services still loading — check /tmp/bge_m3_service.log"
+    fi
+    sleep 10
 done
 
+# ─── 6. Pre-flight ───────────────────────────────────────────────────────────
 echo ""
-echo "=== Install complete ==="
+echo "[6/6] Pre-flight Check"
+bash "$HANNA_DIR/scripts/preflight.sh"
+
+echo ""
+echo "============================================"
+echo "  Install complete!"
+echo "============================================"
+echo ""
 echo "Next steps:"
-echo "  1. Fill in .env with API keys"
-echo "  2. Run: docker compose up -d"
-echo "  3. Run: python3 backend/scripts/migrate_reasoning.py"
-echo "  4. Test: python3 -m pytest backend/tests/ -v"
+echo "  1. Fill in .env with API keys (if not done)"
+echo "  2. Ingest documents: docker exec hanna-backend python3 /app/scripts/scrape_nffku_oetp.py"
+echo "  3. Test: cd backend && python3 -m pytest tests/ -v"
+echo "  4. Enable processing: set AUTO_PROCESS_ENABLED=true in .env"
