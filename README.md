@@ -57,7 +57,7 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   │   ├── cross_rag_api.py        # Cross-RAG REST endpointok
 │   │   ├── rag/
 │   │   │   ├── search.py           # Hybrid keresés: semantic + BM25 → RRF → rerank → authority
-│   │   │   ├── ingest.py           # Dokumentum ingestálás: chunk → enrich → embed → PostgreSQL
+│   │   │   ├── ingest.py           # Dokumentum ingestálás: chunk → enrich → embed → KG extract → PostgreSQL
 │   │   │   ├── chunker.py          # Token-alapú chunking (tiktoken cl100k_base)
 │   │   │   ├── embeddings.py       # BGE-M3 embedding (lokális, OpenAI fallback)
 │   │   │   ├── contextual.py       # Contextual enrichment: doc_type-alapú prefix az embedding elé
@@ -71,7 +71,8 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   │   │   ├── references.py       # Cross-reference resolution (Felhívás 4.2 pont → chunk)
 │   │   │   ├── bm25.py             # Legacy BM25 index (ChromaDB-ből maradt, PostgreSQL tsvector váltotta)
 │   │   │   ├── kg_search.py        # Knowledge Graph keresés: entity → 1-hop → chunks
-│   │   │   ├── post_ingest_kg_oetp.py  # Determinisztikus KG extraction (zero LLM cost)
+│   │   │   ├── kg_extract.py        # Inline KG extraction (gpt-4o-mini, auto in ingest pipeline)
+│   │   │   ├── post_ingest_kg_oetp.py  # Determinisztikus KG extraction (zero LLM cost, legacy batch)
 │   │   │   └── llm_enrichment.py   # LLM-alapú context prefix generálás (batch + inline)
 │   │   ├── email/
 │   │   │   ├── poller.py           # Outlook 365 polling (MS Graph API)
@@ -124,7 +125,7 @@ Többrétegű RAG (Retrieval-Augmented Generation) backend, amely az **OETP (Ott
 │   ├── daily_ingest.sh             # Napi OETP email ingest (cron)
 │   ├── obsidian_sync.sh            # Napi Obsidian vault szinkronizáció (cron)
 │   ├── verify_ingest.py            # Ingest verifikáció (OETP + Cross-RAG)
-│   ├── monitor_nffku.py            # Heti nffku.hu OETP oldal monitoring (LaunchAgent: hétfő 06:15)
+│   ├── monitor_nffku.py            # Napi nffku.hu OETP oldal monitoring (LaunchAgent: naponta 06:15)
 │   └── migrate_bge_m3.py           # BGE-M3 migráció tool
 ├── backend/scripts/
 │   └── rechunk_gyik.py             # GYIK PDF re-chunkolás kérdésenként (28 Q&A pár)
@@ -357,9 +358,13 @@ Ha az email jogi/gazdasági kérdést tartalmaz (vállalkozás, de minimis, jogs
 
 ### OETP KG (`hanna_oetp` DB)
 
-**Fájl:** `rag/post_ingest_kg_oetp.py`
+**Inline KG (automatikus):** `rag/kg_extract.py`
 
-Determinisztikus, **zero LLM cost** entitás-kinyerés minden ingestált dokumentumhoz:
+Az ingest pipeline automatikusan futtatja a KG extraction-t minden új chunkra (gpt-4o-mini, json_repair fallback). Magas értékű doc_type-okra (`felhívás`, `melléklet`, `közlemény`, `gyik`, `segédlet`, `dokumentum`) entitásokat és relációkat nyer ki, majd `kg_entities` / `kg_relations` / `kg_entity_chunks` táblákba menti.
+
+**Legacy batch KG:** `rag/post_ingest_kg_oetp.py`
+
+Determinisztikus, **zero LLM cost** entitás-kinyerés (regex + text-match):
 
 1. **Dokumentum entitás** — doc_type + source metaadatból
 2. **Program entitás** — OETP/NPP2/Távhő

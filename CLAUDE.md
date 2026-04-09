@@ -89,14 +89,15 @@ backend/app/
 ├── observability.py     # Langfuse tracing wrapper
 ├── rag/
 │   ├── search.py        # Hybrid search: semantic + BM25 + KG → RRF → rerank
-│   ├── ingest.py        # Chunk → enrich → embed → PostgreSQL
+│   ├── ingest.py        # Chunk → enrich → embed → KG extract → PostgreSQL
 │   ├── authority.py     # Authority weighting + priority injection
 │   ├── guardrails.py    # 7 domain-specific rules (numerical, eligibility, etc.)
 │   ├── cove.py          # Chain of Verification (claim-level fact check)
 │   ├── selfcheck.py     # Multi-sample consistency check
 │   ├── answer_alignment.py  # Echo/irrelevant detection → skip
 │   ├── depersonalize.py # PII removal before RAG ingestion
-│   └── legal_check.py  # Eligibility claims → legal RAG verification
+│   ├── legal_check.py  # Eligibility claims → legal RAG verification
+│   └── kg_extract.py   # Inline KG extraction (gpt-4o-mini, auto in ingest)
 ├── email/
 │   ├── processor.py     # Autonomous pipeline: poll → filter → draft → save
 │   ├── poller.py        # Graph API inbox polling
@@ -119,7 +120,8 @@ backend/scripts/
 ├── eval_pipeline.py     # Baseline eval with difflib
 ├── bulk_ingest_sent.py  # Historical email bulk ingest by date range
 ├── ingest_subfolders.py # Inbox subfolder email ingest
-├── scrape_nffku_oetp.py # NFFKU közlemény scraper
+├── scrape_nffku_oetp.py # NFFKU közlemény scraper (inline + accordion + downloads)
+├── kg_backfill_new.py   # KG extraction backfill for existing chunks
 ├── run_dspy_optimization.py  # DSPy prompt optimization CLI
 ├── build_reranker_training_data.py  # Chunk survival → reranker training pairs
 ├── finetune_reranker.py     # BGE reranker fine-tuning (MPS GPU)
@@ -202,6 +204,7 @@ All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
 ## Monitoring
 
 - **Healthcheck** (`scripts/healthcheck_discord.sh`): Every 5min via LaunchAgent, checks backend + DB + embeddings + reranker. Auto-restarts Docker containers, Discord alerts on failure/recovery.
+- **NFFKU monitor** (`scripts/monitor_nffku.py`): Daily 06:15 via LaunchAgent, scrapes nffku.hu OETP page, hash-based change detection, auto-triggers Docker scraper+ingest on change.
 - **Scheduler Discord**: Every 2h processing run sends summary to Discord (📬 polled, ✅ drafts, 🟢🟡🔴 confidence).
 - **Authority drift**: Weekly authority adjustment snapshots + Discord alert on significant drift.
 - **DB data check**: Verifies chunks table is non-empty after container restart.
@@ -216,7 +219,7 @@ All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
 | Semantic similarity | 0.684 |
 | Draft length ratio | ~1.7x colleague avg |
 | Verification layers | 15 |
-| Total chunks | 1,408 |
+| Total chunks | ~1,580 |
 | Golden set entries | 25 |
 
 ## Language
