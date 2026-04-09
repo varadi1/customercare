@@ -89,7 +89,7 @@ async def process_new_emails(hours: float = 4) -> dict[str, Any]:
         "low_confidence": 0,
         "legal_queries": 0,
         "image_analyses": 0,
-        "oetp_db_lookups": 0,
+        "program_db_lookups": 0,
         "details": [],
     }
 
@@ -137,7 +137,7 @@ async def process_new_emails(hours: float = 4) -> dict[str, Any]:
             if result.get("image_analysis"):
                 stats["image_analyses"] += 1
             if result.get("oetp_lookup"):
-                stats["oetp_db_lookups"] += 1
+                stats["program_db_lookups"] += 1
 
         except Exception as e:
             logger.error("Error processing email %s: %s", msg.subject[:50], e)
@@ -304,7 +304,7 @@ async def _process_single_email(msg) -> dict[str, Any]:
     try:
         import asyncpg
         conn = await asyncpg.connect(
-            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+            os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
         )
         try:
             from ..reasoning.person_tracker import process_email_entities
@@ -439,8 +439,8 @@ async def _send_discord_summary(stats: dict) -> None:
 
     if stats.get("legal_queries"):
         msg += f"\n⚖️ Jogi lekérdezés: {stats['legal_queries']}"
-    if stats.get("oetp_db_lookups"):
-        msg += f"\n🗄️ OETP DB: {stats['oetp_db_lookups']}"
+    if stats.get("program_db_lookups"):
+        msg += f"\n🗄️ OETP DB: {stats['program_db_lookups']}"
 
     async with httpx.AsyncClient(timeout=10) as client:
         await client.post(settings.discord_webhook_url, json={"content": msg})

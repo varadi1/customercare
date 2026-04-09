@@ -22,7 +22,7 @@ CHROMA_PORT = 8000
 CHROMA_COLLECTION = "hanna_knowledge_bge_m3"
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+PG_DSN = os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 # chunk_type → doc_type mapping
 DOC_TYPE_MAP = {

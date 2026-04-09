@@ -21,7 +21,7 @@ import asyncpg
 logger = logging.getLogger(__name__)
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+PG_DSN = os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 
 async def invalidate_superseded_chunks(

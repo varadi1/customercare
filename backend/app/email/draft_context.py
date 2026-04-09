@@ -311,7 +311,7 @@ async def _get_similar_traces(email_text: str, category: str) -> list[dict]:
             return []
 
         conn = await asyncpg.connect(
-            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+            os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
         )
         try:
             traces = await find_similar_traces(

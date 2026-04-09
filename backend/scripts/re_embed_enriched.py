@@ -15,7 +15,7 @@ import asyncpg
 import json
 import struct
 
-DB_URL = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+DB_URL = os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 BGE_URL = "http://host.docker.internal:8104"
 
 

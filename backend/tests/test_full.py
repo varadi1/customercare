@@ -260,14 +260,14 @@ class TestConfig:
         from app.config import Settings
         s = Settings()
         assert s.embedding_backend == "bge-m3"
-        assert s.oetp_db_port == 3307
+        assert s.program_db_port == 3307
         assert s.auto_process_enabled is False  # default off
 
-    def test_oetp_db_defaults(self):
+    def test_program_db_defaults(self):
         from app.config import Settings
         s = Settings()
-        assert s.oetp_db_host == "185.187.73.44"
-        assert s.oetp_db_name == "tarolo_neuzrt_hu_db"
+        assert s.program_db_host == "185.187.73.44"
+        assert s.program_db_name == "tarolo_neuzrt_hu_db"
 
 
 # ============================================================

@@ -22,7 +22,7 @@ from .contextual import enrich_chunk
 from .kg_extract import extract_and_store as kg_extract_chunk
 
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+PG_DSN = os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 # chunk_type → doc_type mapping (legacy ChromaDB names → PostgreSQL)
 DOC_TYPE_MAP = {
@@ -102,7 +102,7 @@ async def ingest_text_async(
 
     doc_type = _resolve_doc_type(chunk_type)
     authority = _resolve_authority(doc_type)
-    resolved_program = program or "OETP"
+    resolved_program = program or "default"
 
     # Contextual enrichment
     enriched_chunks = [

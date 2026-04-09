@@ -22,7 +22,7 @@ from ..llm_client import chat_completion
 logger = logging.getLogger(__name__)
 
 PG_DSN = os.environ.get(
-    "HANNA_PG_DSN",
+    "CC_PG_DSN",
     "postgresql://klara:klara_docs_2026@cc-db:5432/customercare",
 )
 

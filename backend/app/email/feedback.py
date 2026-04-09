@@ -487,7 +487,7 @@ async def _sync_feedback_to_traces(details: list[dict], drafts: list[dict]) -> N
         return
 
     conn = await asyncpg.connect(
-        os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+        os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
     )
     try:
         for detail in to_sync:

@@ -2,8 +2,8 @@
 OETP pályázati adatbázis client — fetches applicant data from MySQL.
 
 Connection: MySQL readonly (tarolo_neuzrt_hu_db)
-Config via .env: OETP_DB_HOST, OETP_DB_PORT, OETP_DB_USER, OETP_DB_PASSWORD, OETP_DB_NAME
-Feature flag: OETP_DB_ENABLED (default: false)
+Config via .env: PROGRAM_DB_HOST, PROGRAM_DB_PORT, PROGRAM_DB_USER, PROGRAM_DB_PASSWORD, PROGRAM_DB_NAME
+Feature flag: PROGRAM_DB_ENABLED (default: false)
 
 All functions return None/empty if DB is not configured (non-blocking).
 """
@@ -19,16 +19,16 @@ logger = logging.getLogger(__name__)
 
 def _get_connection():
     """Get MySQL connection (sync — pymysql)."""
-    if not settings.oetp_db_enabled:
+    if not settings.program_db_enabled:
         return None
     try:
         import pymysql
         return pymysql.connect(
-            host=settings.oetp_db_host,
-            port=settings.oetp_db_port,
-            user=settings.oetp_db_user,
-            password=settings.oetp_db_password,
-            database=settings.oetp_db_name,
+            host=settings.program_db_host,
+            port=settings.program_db_port,
+            user=settings.program_db_user,
+            password=settings.program_db_password,
+            database=settings.program_db_name,
             connect_timeout=5,
             read_timeout=10,
             charset="utf8mb4",
@@ -202,7 +202,7 @@ async def enrich_draft_context(
     sender_email: str = "",
 ) -> dict[str, Any]:
     """Fetch all relevant OETP data for draft generation."""
-    if not settings.oetp_db_enabled:
+    if not settings.program_db_enabled:
         return {}
 
     result = {"applications": [], "sender_applications": []}

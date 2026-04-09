@@ -1,9 +1,6 @@
 version: "3.8"
 
 services:
-  # ChromaDB removed 2026-02-21 — fully migrated to PostgreSQL+pgvector
-  # Data preserved in ./data/chromadb if needed for reference
-
   db:
     container_name: cc-db
     image: pgvector/pgvector:pg17
@@ -40,35 +37,43 @@ services:
       - ./data:/app/data
       - ${REPORT_DIR:-./data/reports}:/app/reports
       - ./backend/scripts:/app/scripts:ro
-      - ../scripts:/app/crossrag_scripts:ro
     environment:
-      - HANNA_PG_DSN=postgresql://klara:klara_docs_2026@cc-db:5432/customercare
-      - CROSSRAG_DSN=postgresql://klara:klara_docs_2026@host.docker.internal:5433/cross_rag
-      - CROSSRAG_SCRIPTS=/app/crossrag_scripts
+      # Database
+      - CC_PG_DSN=postgresql://klara:klara_docs_2026@cc-db:5432/customercare
+      # Embedding
       - EMBEDDING_BACKEND=bge-m3
       - BGE_M3_URL=http://host.docker.internal:8104
       - EMBEDDING_DIMENSIONS=1024
+      # LLM providers
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - COHERE_API_KEY=${COHERE_API_KEY}
+      # Email (MS Graph API)
       - GRAPH_TENANT_ID=${GRAPH_TENANT_ID}
       - GRAPH_CLIENT_ID=${GRAPH_CLIENT_ID}
       - GRAPH_CLIENT_SECRET=${GRAPH_CLIENT_SECRET}
       - GRAPH_USER_EMAIL=${GRAPH_USER_EMAIL}
-      - SHARED_MAILBOXES=${SHARED_MAILBOXES:-info@neuzrt.hu,lakossagienergetika@neuzrt.hu}
-      - OETP_DB_HOST=${OETP_DB_HOST:-185.187.73.44}
-      - OETP_DB_PORT=${OETP_DB_PORT:-3307}
-      - OETP_DB_USER=${OETP_DB_USER:-tarolo_readonly}
-      - OETP_DB_PASSWORD=${OETP_DB_PASSWORD}
-      - OETP_DB_ENABLED=${OETP_DB_ENABLED:-false}
+      - SHARED_MAILBOXES=${SHARED_MAILBOXES:-}
+      # Program-specific external DB (optional)
+      - PROGRAM_DB_HOST=${PROGRAM_DB_HOST:-}
+      - PROGRAM_DB_PORT=${PROGRAM_DB_PORT:-3306}
+      - PROGRAM_DB_USER=${PROGRAM_DB_USER:-}
+      - PROGRAM_DB_PASSWORD=${PROGRAM_DB_PASSWORD:-}
+      - PROGRAM_DB_NAME=${PROGRAM_DB_NAME:-}
+      - PROGRAM_DB_ENABLED=${PROGRAM_DB_ENABLED:-false}
+      # Reports & processing
       - REPORT_DIR=/app/reports
       - AUTO_PROCESS_ENABLED=${AUTO_PROCESS_ENABLED:-false}
+      # Notifications
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
-      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://cc-langfuse:3000}
+      # Langfuse (shared instance — Hanna's Langfuse on :3001)
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3001}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      # Program config
+      - PROGRAM_CONFIG=${PROGRAM_CONFIG:-config/program.yaml}
     healthcheck:
       test: ["CMD", "curl", "-f", "--max-time", "10", "http://localhost:8000/livez"]
       interval: 60s
@@ -76,38 +81,5 @@ services:
       retries: 5
       start_period: 30s
 
-  langfuse-db:
-    container_name: cc-langfuse-db
-    image: postgres:17
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=langfuse
-      - POSTGRES_PASSWORD=langfuse_hanna
-      - POSTGRES_DB=langfuse
-    volumes:
-      - cc-langfuse-pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-
-  langfuse:
-    container_name: cc-langfuse
-    image: langfuse/langfuse:2
-    restart: unless-stopped
-    depends_on:
-      langfuse-db:
-        condition: service_healthy
-    ports:
-      - "3002:3000"
-    environment:
-      - DATABASE_URL=postgresql://langfuse:langfuse_hanna@cc-langfuse-db:5432/langfuse
-      - NEXTAUTH_URL=http://localhost:3001
-      - NEXTAUTH_SECRET=cc-langfuse-secret-260407
-      - SALT=cc-langfuse-salt-260407
-      - TELEMETRY_ENABLED=false
-
 volumes:
   cc-pgdata:
-  cc-langfuse-pgdata:

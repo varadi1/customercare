@@ -66,7 +66,7 @@ fi
 # --- 3. Docker services ---
 echo ""
 echo "[3/7] Docker Services"
-for svc in cc-db cc-backend cc-langfuse; do
+for svc in cc-db cc-backend; do
     state=$(docker inspect -f '{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
     if [ "$state" = "running" ]; then
         ok "$svc running"

@@ -29,7 +29,7 @@ from .query_expansion import expand_query, expand_query_async
 # PostgreSQL connection pool
 _pool: Optional[asyncpg.Pool] = None
 import os
-PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+PG_DSN = os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
 
 
 async def _get_pool() -> asyncpg.Pool:

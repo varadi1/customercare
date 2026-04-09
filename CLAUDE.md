@@ -191,7 +191,7 @@ Manual (quarterly) → finetune_reranker.py
 
 All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
 
-- `HANNA_PG_DSN` — PostgreSQL connection (default: `postgresql://klara:klara_docs_2026@cc-db:5432/customercare`)
+- `CC_PG_DSN` — PostgreSQL connection (default: `postgresql://klara:klara_docs_2026@cc-db:5432/customercare`)
 - `AUTO_PROCESS_ENABLED` — Autonomous email processing (default: false)
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` — LLM providers
 - `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` — MS Graph API

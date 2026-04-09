@@ -131,7 +131,7 @@ def get_existing_sources() -> set[str]:
 
     async def _fetch():
         conn = await asyncpg.connect(
-            os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
+            os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")
         )
         rows = await conn.fetch(
             "SELECT DISTINCT doc_id FROM chunks WHERE doc_type IN ('email_reply', 'email_question')"
