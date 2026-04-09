@@ -61,7 +61,7 @@ setup_bge_m3() {
     if [ ! -d "$venv" ] && [ ! -L "$venv" ]; then
         echo "  📦 Creating BGE-M3 venv..."
         python3 -m venv "$venv"
-        "$venv/bin/pip" install -q torch fastapi uvicorn sentence-transformers FlagEmbedding numpy
+        "$venv/bin/pip" install -q -r "$HANNA_DIR/infra/gpu_services/requirements-bge-m3.txt"
         echo "  ✅ BGE-M3 venv ready"
         # Symlink for ingest
         ln -sf "$venv" "$ingest_dir/.venv" 2>/dev/null || true
@@ -85,7 +85,7 @@ setup_reranker() {
     if [ ! -d "$venv" ] && [ ! -L "$venv" ]; then
         echo "  📦 Creating Reranker venv..."
         python3 -m venv "$venv"
-        "$venv/bin/pip" install -q torch fastapi uvicorn transformers numpy pydantic
+        "$venv/bin/pip" install -q -r "$HANNA_DIR/infra/gpu_services/requirements-reranker.txt"
         echo "  ✅ Reranker venv ready"
     else
         echo "  ✅ Reranker venv exists"
