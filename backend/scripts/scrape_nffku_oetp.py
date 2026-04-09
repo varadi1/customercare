@@ -32,13 +32,68 @@ def fetch_page(client: httpx.Client) -> BeautifulSoup:
 
 
 def extract_kozlemenyek(soup: BeautifulSoup) -> list[dict]:
-    """Extract közlemények from accordion buttons + their content."""
+    """Extract közlemények from the page.
+
+    Handles two layouts:
+    1. Inline közlemények: <p><strong>DATE – Title</strong> blocks before accordions
+    2. Accordion közlemények: div[data-rlta-element="button"] with h3 headings
+    """
     results = []
 
-    # Find all accordion buttons (h3 inside button)
-    buttons = soup.find_all("button")
+    # --- 1. Inline közlemények (before accordions, plain <strong> in <p>) ---
+    article_body = soup.find("div", class_="com-content-article__body") or soup
+    first_accordion = soup.find("div", attrs={"data-rlta-element": "container"})
+
+    # Collect <p> tags that appear before the first accordion
+    for p in article_body.find_all("p"):
+        # Stop if we've reached the accordion section
+        if first_accordion and p.find_parent(attrs={"data-rlta-element": True}):
+            break
+        if first_accordion and first_accordion in p.previous_elements:
+            break
+
+        strong = p.find("strong")
+        if not strong:
+            continue
+        strong_text = strong.get_text(strip=True)
+        date_match = re.search(r"(\d{4})[\.\s]+(\d{2})[\.\s]+(\d{2})", strong_text)
+        if not date_match:
+            continue
+
+        date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}"
+        title = strong_text
+
+        # Gather content: this <p> + following siblings until <hr> or accordion
+        content_parts = [p.get_text(separator="\n", strip=True)]
+        links = []
+        for sib in p.find_next_siblings():
+            if sib.name == "hr":
+                break
+            if sib.get("data-rlta-element"):
+                break
+            if sib.name == "div" and sib.get("data-rlta-element"):
+                break
+            content_parts.append(sib.get_text(separator="\n", strip=True))
+            for a in sib.find_all("a", href=True):
+                href = a["href"]
+                if any(href.lower().endswith(ext) for ext in [".pdf", ".doc", ".docx", ".xls", ".xlsx"]):
+                    link_text = a.get_text(strip=True) or os.path.basename(href)
+                    full_url = href if href.startswith("http") else BASE_URL + href
+                    links.append({"name": link_text, "url": full_url})
+
+        results.append({
+            "title": title,
+            "date": date,
+            "content": "\n".join(content_parts),
+            "links": links,
+        })
+
+    # --- 2. Accordion közlemények (data-rlta-element="button") ---
+    buttons = soup.find_all("div", attrs={"data-rlta-element": "button"})
     for btn in buttons:
-        h3 = btn.find("h3")
+        h3 = btn.find("h3", attrs={"data-rlta-element": "heading"})
+        if not h3:
+            h3 = btn.find("h3")
         if not h3:
             continue
 
@@ -50,13 +105,14 @@ def extract_kozlemenyek(soup: BeautifulSoup) -> list[dict]:
         date_match = re.search(r"(\d{4})[\.\s]+(\d{2})[\.\s]+(\d{2})", title)
         date = f"{date_match.group(1)}-{date_match.group(2)}-{date_match.group(3)}" if date_match else None
 
-        # Get the content panel (sibling div)
+        # Get the content panel (aria-controls -> panel id)
         panel_id = btn.get("aria-controls", "")
         panel = None
         if panel_id:
             panel = soup.find(id=panel_id)
         if not panel:
-            # Try next sibling
+            panel = btn.find_next_sibling("div", attrs={"data-rlta-element": "panel"})
+        if not panel:
             panel = btn.find_next_sibling("div")
 
         content = ""
@@ -85,7 +141,13 @@ def extract_downloads(soup: BeautifulSoup) -> list[dict]:
     """Extract letölthető dokumentumok from the downloads table."""
     downloads = []
 
-    table = soup.find("table")
+    # Find the table that contains document download links (PDF/DOC)
+    # There may be multiple tables; pick the one with file links
+    table = None
+    for t in soup.find_all("table"):
+        if t.find("a", href=re.compile(r"\.(pdf|doc|docx|xls|xlsx)", re.I)):
+            table = t
+            break
     if not table:
         return downloads
 

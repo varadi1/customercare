@@ -123,22 +123,35 @@ def diff_snapshots(old: dict, new: dict) -> dict:
     return changes
 
 
-def trigger_ingest(text: str):
-    """Trigger Hanna ingest with the updated content."""
+def trigger_ingest():
+    """Trigger Hanna scraper+ingest via Docker container."""
+    import subprocess
+
     try:
-        # Use the Hanna search API to check if it's up
-        resp = requests.get(f"{HANNA_API}/health", timeout=5)
-        if resp.status_code != 200:
-            print(f"WARNING: Hanna API not available ({resp.status_code})")
+        # Check if hanna-backend container is running
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", "hanna-backend"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.stdout.strip() != "true":
+            print("WARNING: hanna-backend container is not running, skipping ingest")
             return False
 
-        # For now, just save the text for manual ingest
-        # Full auto-ingest would use the ingest API
-        output = SNAPSHOT_DIR / "pending_ingest.txt"
-        with open(output, "w") as f:
-            f.write(text)
-        print(f"Content saved for ingest: {output}")
-        print(f"To ingest manually, run the Hanna ingest pipeline on this file.")
+        # Run the scraper inside the container (downloads + ingests)
+        print("Running scraper+ingest in hanna-backend container...")
+        result = subprocess.run(
+            ["docker", "exec", "hanna-backend", "python3", "/app/scripts/scrape_nffku_oetp.py"],
+            capture_output=True, text=True, timeout=600,
+        )
+        print(result.stdout)
+        if result.stderr:
+            print(f"STDERR: {result.stderr}")
+
+        if result.returncode != 0:
+            print(f"WARNING: Scraper exited with code {result.returncode}")
+            return False
+
+        print("Ingest completed successfully.")
         return True
 
     except Exception as e:
@@ -173,7 +186,7 @@ def main():
         print("\n  No previous snapshot — saving initial baseline.")
         save_snapshot(current)
         if args.ingest or args.force:
-            trigger_ingest(current["text"])
+            trigger_ingest()
         return
 
     diff = diff_snapshots(previous, current)
@@ -203,7 +216,7 @@ def main():
     # Ingest if requested
     if args.ingest or args.force:
         print("\nTriggering ingest...")
-        trigger_ingest(current["text"])
+        trigger_ingest()
 
 
 if __name__ == "__main__":

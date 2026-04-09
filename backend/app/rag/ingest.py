@@ -19,6 +19,7 @@ from ..config import settings
 from .chunker import chunk_text, chunk_markdown
 from .embeddings import embed_texts_ingest as embed_texts
 from .contextual import enrich_chunk
+from .kg_extract import extract_and_store as kg_extract_chunk
 
 import os
 PG_DSN = os.environ.get("HANNA_PG_DSN", "postgresql://klara:klara_docs_2026@hanna-db:5432/hanna_oetp")
@@ -186,6 +187,22 @@ async def ingest_text_async(
                 inserted += 1
             except Exception as e:
                 print(f"[ingest] Error inserting chunk {chunk_id}: {e}")
+
+    # KG extraction for high-value doc types (non-blocking on failure)
+    if doc_type in {"felhívás", "melléklet", "közlemény", "gyik", "segédlet", "dokumentum"}:
+        kg_ent_total = 0
+        kg_rel_total = 0
+        try:
+            async with pool.acquire() as conn:
+                for i, chunk in enumerate(chunks):
+                    chunk_id = _generate_chunk_id(source, i)
+                    ent, rel = await kg_extract_chunk(conn, chunk_id, chunk, doc_type, source)
+                    kg_ent_total += ent
+                    kg_rel_total += rel
+            if kg_ent_total or kg_rel_total:
+                print(f"[ingest] KG: {kg_ent_total} entities, {kg_rel_total} relations from {source}")
+        except Exception as e:
+            print(f"[ingest] KG extraction warning (non-fatal): {e}")
 
     return inserted
 
