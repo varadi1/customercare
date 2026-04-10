@@ -121,7 +121,7 @@ backend/scripts/
 ├── eval_pipeline.py     # Baseline eval with difflib
 ├── bulk_ingest_sent.py  # Historical email bulk ingest by date range
 ├── ingest_subfolders.py # Inbox subfolder email ingest
-├── scrape_nffku_oetp.py # NFFKU közlemény scraper (inline + accordion + downloads)
+├── scrape.py            # Generic config-driven scraper (escalation: httpx→stealth→camoufox)
 ├── kg_backfill_new.py   # KG extraction backfill for existing chunks
 ├── run_dspy_optimization.py  # DSPy prompt optimization CLI
 ├── build_reranker_training_data.py  # Chunk survival → reranker training pairs
@@ -254,7 +254,7 @@ Langfuse v2 SDK (`observability.py`). Two trace types:
 ## Monitoring
 
 - **Healthcheck** (`scripts/healthcheck_discord.sh`): Every 5min via LaunchAgent, checks backend + DB + embeddings + reranker. Auto-restarts Docker containers, Discord alerts on failure/recovery.
-- **NFFKU monitor** (`scripts/monitor_nffku.py`): Daily 06:15 via LaunchAgent, scrapes nffku.hu OETP page, hash-based change detection, auto-triggers Docker scraper+ingest on change.
+- **Scraper monitor** (`scripts/monitor_scraper.py`): Daily 06:15 via LaunchAgent, checks all configured pages for changes (hash-based), auto-triggers Docker scraper+ingest on change.
 - **Scheduler Discord**: Every 2h processing run sends summary to Discord (📬 polled, ✅ drafts, 🟢🟡🔴 confidence).
 - **Authority drift**: Weekly authority adjustment snapshots + Discord alert on significant drift.
 - **DB data check**: Verifies chunks table is non-empty after container restart.

@@ -3,11 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.openclaw.nffku-monitor</string>
+    <string>com.openclaw.cc-scraper-monitor</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/varadiimre/DEV/customercare/scripts/monitor_nffku.py</string>
+        <string>/Users/varadiimre/DEV/customercare/scripts/monitor_scraper.py</string>
+        <string>--ingest</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -17,8 +18,8 @@
         <integer>15</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/nffku-monitor.log</string>
+    <string>/tmp/cc-scraper-monitor.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/nffku-monitor.err</string>
+    <string>/tmp/cc-scraper-monitor.err</string>
 </dict>
 </plist>

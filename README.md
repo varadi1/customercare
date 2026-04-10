@@ -78,7 +78,7 @@ Részletes architektúra leírás: [CLAUDE.md](CLAUDE.md) és [DEPLOYMENT.md](DE
 7. ✅ `main.py` — system prompt (Langfuse → YAML → hardcoded), signature YAML-ből
 8. ✅ `guardrails.py` — toggle-ök + custom_rules YAML-ből, app_id_pattern config-ból
 9. ✅ `skip_filter.py` — skip domains/patterns YAML-ből, processor.py is YAML-t használ
-10. ⬜ `scrape_nffku_oetp.py` → `scrape.py` — generikus scraper
+10. ✅ `scrape.py` — generikus config-driven scraper (escalation: httpx→stealth→camoufox, snapshot+change detection, multi-page, PDF download+ingest)
 11. ✅ `drafts.py` — signature + fallback YAML-ből
 
 ## Licenc

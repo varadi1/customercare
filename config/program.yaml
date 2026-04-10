@@ -15,17 +15,32 @@ program:
   language: "hu"
   description: "Lakossági energiatároló pályázat ügyfélszolgálat"
 
-# --- Scraper: knowledge base source ----------------------------------------
+# --- Scraper: knowledge base sources ----------------------------------------
 scraper:
   enabled: true
-  url: "https://nffku.hu/index.php/tile-detail/otthonienergiatarolo"
+  method: "auto"                        # auto | simple | browser
+  download_extensions: [".pdf", ".docx", ".xlsx"]
+  download_dir: "data/downloads"
+  snapshot_dir: "data/scraper_snapshots"
+  rate_limit_seconds: 3
   schedule: "daily 06:15"
-  # CSS selectors for page structure (auto-detected if empty)
-  selectors:
-    accordion_button: "div[data-rlta-element='button']"
-    accordion_heading: "h3[data-rlta-element='heading']"
-    accordion_panel: "div[data-rlta-element='panel']"
-    downloads_table: "table"  # auto-finds table with file links
+
+  # Browser fallback service (camoufox) — used when simple HTTP is blocked
+  browser_service_url: "http://host.docker.internal:8111"
+  browser_timeout: 30
+
+  # Pages to scrape — each gets its own snapshot + change detection
+  pages:
+    - url: "https://nffku.hu/index.php/tile-detail/otthonienergiatarolo"
+      label: "OETP közlemények"
+      doc_type: "közlemény"
+      selectors:
+        content: null                   # null = full body
+        accordion_button: "div[data-rlta-element='button']"
+        accordion_heading: "h3[data-rlta-element='heading']"
+        accordion_panel: "div[data-rlta-element='panel']"
+        downloads_table: "table"
+        remove: ["nav", "footer", "header", "script", "style"]
 
 # --- Document types and authority scores -----------------------------------
 doc_types:
