@@ -21,6 +21,7 @@ async def selfcheck(
     n_samples: int = 2,
     temperature: float = 0.7,
     similarity_threshold: float = 0.5,
+    lf_trace=None,
 ) -> dict:
     """Run SelfCheck: generate N additional samples and compare consistency.
 
@@ -77,13 +78,18 @@ async def selfcheck(
     avg_sim = sum(s["similarity"] for s in similarities) / len(similarities)
     min_sim = min(s["similarity"] for s in similarities)
 
-    return {
+    out = {
         "consistent": min_sim >= similarity_threshold,
         "avg_similarity": round(avg_sim, 3),
         "min_similarity": round(min_sim, 3),
         "n_samples": len(samples),
         "details": similarities,
     }
+
+    if lf_trace:
+        lf_trace.selfcheck(result=out, n_calls=len(samples))
+
+    return out
 
 
 def _word_overlap_similarity(text_a: str, text_b: str) -> float:

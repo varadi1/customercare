@@ -108,7 +108,7 @@ def _clean_line(line: str) -> str | None:
         return None
 
     # Apply PII replacements
-    line = _replace_oetp_ids(line)
+    line = _replace_app_ids(line)
     line = _replace_emails(line)
     line = _replace_phones(line)
     line = _replace_addresses(line)
@@ -116,7 +116,7 @@ def _clean_line(line: str) -> str | None:
     return line
 
 
-def _replace_oetp_ids(text: str) -> str:
+def _replace_app_ids(text: str) -> str:
     """OETP-2026-123456 → [pályázati azonosító]"""
     return re.sub(r"OETP-\d{4}-\d{4,8}", "[pályázati azonosító]", text)
 

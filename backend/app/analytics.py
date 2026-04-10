@@ -139,7 +139,7 @@ def generate_weekly_report(weeks: int = 1) -> dict:
 
     # Format markdown report
     lines = [
-        f"# Hanna Heti Riport — {now.strftime('%Y-%m-%d')}",
+        f"# CC Heti Riport — {now.strftime('%Y-%m-%d')}",
         "",
         f"**Időszak:** elmúlt {weeks} hét",
         f"**Feldolgozott emailek:** {analysis['total_emails']}",

@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.openclaw.hanna-healthcheck</string>
+    <string>com.openclaw.cc-healthcheck</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/varadiimre/DEV/hanna/scripts/healthcheck_discord.sh</string>
+        <string>/Users/varadiimre/DEV/customercare/scripts/healthcheck_discord.sh</string>
     </array>
     <key>StartInterval</key>
     <integer>300</integer>
     <key>StandardOutPath</key>
-    <string>/tmp/hanna-healthcheck.log</string>
+    <string>/tmp/cc-healthcheck.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/hanna-healthcheck.log</string>
+    <string>/tmp/cc-healthcheck.log</string>
 </dict>
 </plist>

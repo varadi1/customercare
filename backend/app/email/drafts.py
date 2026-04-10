@@ -39,18 +39,18 @@ def _final_safety_check(body_html: str, confidence: str) -> str:
 
 # Outlook categories applied to the original email after draft creation
 CATEGORY_MAP = {
-    "high": "Hanna - draft kész",
-    "medium": "Hanna - review kell",
-    "low": "Hanna - emberi válasz kell",
+    "high": "CC - draft kész",
+    "medium": "CC - review kell",
+    "low": "CC - emberi válasz kell",
 }
 
-# All Hanna category values (for filtering)
-HANNA_CATEGORIES = {
-    "Hanna - draft kész",
-    "Hanna - review kell",
-    "Hanna - emberi válasz kell",
-    "Hanna - elküldve",
-    "Hanna - nem kell válasz",
+# All CC category values (for filtering)
+CC_CATEGORIES = {
+    "CC - draft kész",
+    "CC - review kell",
+    "CC - emberi válasz kell",
+    "CC - elküldve",
+    "CC - nem kell válasz",
 }
 
 
@@ -61,7 +61,7 @@ async def _set_email_category(
     message_id: str,
     confidence: str,
 ) -> None:
-    """Add a Hanna category to the original email WITHOUT removing existing categories."""
+    """Add a CC category to the original email WITHOUT removing existing categories."""
     category = CATEGORY_MAP.get(confidence, CATEGORY_MAP["medium"])
     url = f"{GRAPH_BASE}/users/{mailbox}/messages/{message_id}"
     try:
@@ -73,9 +73,9 @@ async def _set_email_category(
         if get_resp.status_code == 200:
             existing = get_resp.json().get("categories", [])
 
-        # Remove any previous Hanna categories, then add the new one
-        hanna_prefixes = tuple(CATEGORY_MAP.values())
-        merged = [c for c in existing if c not in hanna_prefixes]
+        # Remove any previous CC categories, then add the new one
+        cc_prefixes = tuple(CATEGORY_MAP.values())
+        merged = [c for c in existing if c not in cc_prefixes]
         merged.append(category)
 
         resp = await client.patch(url, headers=headers, json={"categories": merged})
@@ -139,9 +139,9 @@ async def create_reply_draft(
         # Step 2: Update the draft body with our generated content
         # Add confidence icon at the top (icon only, no text — operator sees the Outlook category for details)
         confidence_icon = {
-            "high": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="Hanna - Magabiztos válasz">🟢</div>',
-            "medium": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="Hanna - Részben biztos, kérlek ellenőrizd">🟡</div>',
-            "low": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="Hanna - Bizonytalan, emberi válasz javasolt">🔴</div>',
+            "high": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="CC - Magabiztos válasz">🟢</div>',
+            "medium": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="CC - Részben biztos, kérlek ellenőrizd">🟡</div>',
+            "low": '<div style="padding:4px;margin-bottom:12px;font-size:18px" title="CC - Bizonytalan, emberi válasz javasolt">🔴</div>',
         }
         banner = confidence_icon.get(confidence, confidence_icon["medium"])
 
@@ -225,14 +225,14 @@ async def list_drafts(mailbox: str, limit: int = 20) -> list[dict]:
 
 
 async def mark_sent_emails(mailbox: str, hours: int = 4) -> dict:
-    """Check Sent Items and mark original emails as 'Hanna - elküldve'.
+    """Check Sent Items and mark original emails as 'CC - elküldve'.
     
     This function:
     1. Fetches recent sent emails (last N hours)
     2. For each sent email that is a reply (has conversationId)
     3. Finds the original email in Inbox with matching conversationId
-    4. If the original has a Hanna category (draft kész, review kell, etc.)
-    5. Updates it to 'Hanna - elküldve' while preserving non-Hanna categories
+    4. If the original has a CC category (draft kész, review kell, etc.)
+    5. Updates it to 'CC - elküldve' while preserving non-CC categories
     
     Returns dict with counts of processed/updated/errors.
     """
@@ -242,7 +242,7 @@ async def mark_sent_emails(mailbox: str, hours: int = 4) -> dict:
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     since_str = since.strftime("%Y-%m-%dT%H:%M:%SZ")
     
-    results = {"checked": 0, "updated": 0, "already_sent": 0, "no_hanna": 0, "errors": 0}
+    results = {"checked": 0, "updated": 0, "already_sent": 0, "no_cc_draft": 0, "errors": 0}
     
     async with httpx.AsyncClient(timeout=60) as client:
         # Get recent sent emails
@@ -299,21 +299,21 @@ async def mark_sent_emails(mailbox: str, hours: int = 4) -> dict:
                     orig_id = orig_email["id"]
                     categories = orig_email.get("categories", [])
                     
-                    # Check if it has a Hanna category that should be updated
-                    has_hanna = any(c in HANNA_CATEGORIES for c in categories)
-                    already_sent = "Hanna - elküldve" in categories
+                    # Check if it has a CC category that should be updated
+                    has_cc_draft = any(c in CC_CATEGORIES for c in categories)
+                    already_sent = "CC - elküldve" in categories
                     
                     if already_sent:
                         results["already_sent"] += 1
                         continue
                     
-                    if not has_hanna:
-                        results["no_hanna"] += 1
+                    if not has_cc_draft:
+                        results["no_cc_draft"] += 1
                         continue
                     
-                    # Update: remove old Hanna categories, add "elküldve", keep others
-                    new_categories = [c for c in categories if c not in HANNA_CATEGORIES]
-                    new_categories.append("Hanna - elküldve")
+                    # Update: remove old CC categories, add "elküldve", keep others
+                    new_categories = [c for c in categories if c not in CC_CATEGORIES]
+                    new_categories.append("CC - elküldve")
                     
                     update_url = f"{GRAPH_BASE}/users/{mailbox}/messages/{orig_id}"
                     update_resp = await client.patch(

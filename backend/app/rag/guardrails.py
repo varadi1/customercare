@@ -21,7 +21,7 @@ def run_all_guardrails(
     body_html: str,
     verified_facts: list[dict],
     top_chunks: list[dict],
-    email_oetp_ids: list[str] | None = None,
+    email_app_ids: list[str] | None = None,
     email_text: str = "",
     citations: dict | None = None,
 ) -> dict:
@@ -48,8 +48,8 @@ def run_all_guardrails(
     warnings.extend(_check_contradictions(top_chunks))
 
     # 4. OETP ID cross-check
-    if email_oetp_ids:
-        warnings.extend(_check_oetp_id_match(plain, email_oetp_ids))
+    if email_app_ids:
+        warnings.extend(_check_app_id_match(plain, email_app_ids))
 
     # 5. Forbidden phrases
     warnings.extend(_check_forbidden_phrases(plain))
@@ -211,11 +211,11 @@ def _check_contradictions(top_chunks: list[dict]) -> list[dict]:
 
 # ── 4. OETP ID cross-check ──
 
-def _check_oetp_id_match(plain: str, email_oetp_ids: list[str]) -> list[dict]:
+def _check_app_id_match(plain: str, email_app_ids: list[str]) -> list[dict]:
     """Check that OETP IDs in the draft match the email's IDs."""
     warnings = []
     draft_ids = set(re.findall(r"OETP-\d{4}-\d+", plain))
-    email_ids = set(email_oetp_ids)
+    email_ids = set(email_app_ids)
 
     if draft_ids and email_ids and not (draft_ids & email_ids):
         warnings.append({

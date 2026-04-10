@@ -94,7 +94,7 @@ async def register_organization(
 
 async def get_or_create_application(
     conn: asyncpg.Connection,
-    oetp_id: str,
+    app_id: str,
 ) -> int:
     """Get or create an application entity from OETP-ID."""
     existing = await conn.fetchrow(
@@ -103,7 +103,7 @@ async def get_or_create_application(
         WHERE type = 'application'
           AND $1 = ANY(aliases)
         """,
-        oetp_id,
+        app_id,
     )
 
     if existing:
@@ -115,11 +115,11 @@ async def get_or_create_application(
         VALUES ($1, 'application', ARRAY[$1]::text[], '{"source": "email", "program": "OETP"}'::jsonb)
         RETURNING id
         """,
-        oetp_id,
+        app_id,
     )
 
     entity_id = row["id"]
-    logger.info("Created application entity: %s → id=%d", oetp_id, entity_id)
+    logger.info("Created application entity: %s → id=%d", app_id, entity_id)
     return entity_id
 
 
@@ -159,7 +159,7 @@ async def process_email_entities(
     conn: asyncpg.Connection,
     sender_name: str,
     sender_email: str,
-    oetp_ids: list[str],
+    app_ids: list[str],
     email_subject: str = "",
     category: str = "",
 ) -> dict:
@@ -195,8 +195,8 @@ async def process_email_entities(
         result["relations_created"] += 1
 
     # 3. OETP application entities + links
-    for oetp_id in oetp_ids:
-        app_id = await get_or_create_application(conn, oetp_id)
+    for app_id in app_ids:
+        app_id = await get_or_create_application(conn, app_id)
         result["application_ids"].append(app_id)
 
         # Person ASKED_ABOUT application
@@ -207,10 +207,10 @@ async def process_email_entities(
     return result
 
 
-def extract_oetp_ids(text: str) -> list[str]:
-    """Extract OETP application IDs from text."""
-    pattern = r"OETP-\d{4}-\d{4,8}"
-    return list(set(re.findall(pattern, text, re.IGNORECASE)))
+def extract_app_ids(text: str) -> list[str]:
+    """Extract application IDs from text using program.yaml pattern."""
+    from .radix_client import extract_app_ids as _extract
+    return _extract(text)
 
 
 def _domain_to_org_name(domain: str) -> str:

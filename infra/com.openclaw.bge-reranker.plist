@@ -3,8 +3,8 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.openclaw.hanna-reranker</string>
-    
+    <string>com.openclaw.bge-reranker</string>
+
     <key>ProgramArguments</key>
     <array>
         <string>/Users/varadiimre/DEV/local_llm/reranker/.venv/bin/python</string>
@@ -16,20 +16,20 @@
         <string>--port</string>
         <string>8102</string>
     </array>
-    
+
     <key>WorkingDirectory</key>
     <string>/Users/varadiimre/DEV/local_llm/reranker</string>
-    
+
     <key>RunAtLoad</key>
     <true/>
-    
+
     <key>KeepAlive</key>
     <true/>
-    
+
     <key>StandardOutPath</key>
-    <string>/tmp/hanna-reranker.log</string>
-    
+    <string>/tmp/bge-reranker.log</string>
+
     <key>StandardErrorPath</key>
-    <string>/tmp/hanna-reranker.log</string>
+    <string>/tmp/bge-reranker.log</string>
 </dict>
 </plist>

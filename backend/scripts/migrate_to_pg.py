@@ -1,4 +1,4 @@
-"""Migrate Hanna OETP data from ChromaDB to PostgreSQL.
+"""Migrate CustomerCare data from ChromaDB to PostgreSQL.
 
 Usage (inside Docker container):
     python3 /app/scripts/migrate_to_pg.py [--dry-run]
@@ -19,7 +19,7 @@ import chromadb
 # --- Config ---
 CHROMA_HOST = "chromadb"
 CHROMA_PORT = 8000
-CHROMA_COLLECTION = "hanna_knowledge_bge_m3"
+CHROMA_COLLECTION = "cc_knowledge_bge_m3"
 
 import os
 PG_DSN = os.environ.get("CC_PG_DSN", "postgresql://klara:klara_docs_2026@cc-db:5432/customercare")

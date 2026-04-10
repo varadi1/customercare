@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Hanna — Unified Ingest Verification & Status Tracking.
+"""CustomerCare — Unified Ingest Verification & Status Tracking.
 
-Hanna manages 2 collections:
+CustomerCare manages 2 collections:
   1. OETP/email docs — emails, PDFs, segédletek (/stats, /search endpoints)
   2. Cross-RAG — entity linking across systems (/cross-rag/* endpoints)
 
@@ -147,14 +147,14 @@ def generate_report(summary, output_path=None):
     lines = [
         "---",
         "tags:",
-        "  - hanna",
+        "  - customercare",
         "  - oetp",
         "  - rag",
         "  - verify",
         f"date: {date_str}",
         "---",
         "",
-        f"# Hanna — Ingest verifikáció {date_str} {time_str}",
+        f"# CustomerCare — Ingest verifikáció {date_str} {time_str}",
         "",
         "> [!info] Összefoglaló",
         f"> Státusz: **{summary['status'].upper()}**",
@@ -219,13 +219,13 @@ def generate_report(summary, output_path=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Verify Hanna ingest (OETP + Cross-RAG)")
+    parser = argparse.ArgumentParser(description="Verify CustomerCare ingest (OETP + Cross-RAG)")
     parser.add_argument("--report", action="store_true", help="Generate Obsidian report")
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
 
     if not args.json:
-        print(f"[{ts()}] Hanna — Ingest Verification")
+        print(f"[{ts()}] CustomerCare — Ingest Verification")
         print(f"{'=' * 60}")
 
     summary = verify_all()
@@ -252,7 +252,7 @@ def main():
 
     if args.report:
         date_str = datetime.now().strftime("%Y-%m-%d")
-        report_path = os.path.join(REPORT_DIR, f"hanna-ingest-verify-{date_str}.md")
+        report_path = os.path.join(REPORT_DIR, f"cc-ingest-verify-{date_str}.md")
         generate_report(summary, report_path)
 
     return 0 if summary["status"] != "error" else 1

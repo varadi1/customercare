@@ -1,4 +1,4 @@
-"""Hanna OETP RAG healthcheck — napi ellenőrzés.
+"""CustomerCare RAG healthcheck — napi ellenőrzés.
 
 Usage:
     docker exec cc-backend python3 /app/scripts/healthcheck.py

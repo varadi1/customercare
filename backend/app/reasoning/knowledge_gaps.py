@@ -1,9 +1,9 @@
 """
-Knowledge gap detection — identifies topics where Hanna struggles.
+Knowledge gap detection — identifies topics where CC struggles.
 
 Analyzes reasoning_traces to find:
 1. REJECTED traces (colleague completely rewrote the answer)
-2. Low confidence traces (Hanna wasn't sure)
+2. Low confidence traces (CC wasn't sure)
 3. Recurring unanswered topics (same category, multiple failures)
 
 Output: structured report for Obsidian !inbox/!reports/
@@ -176,10 +176,10 @@ def _generate_recommendations(
 def format_obsidian_report(report: dict[str, Any]) -> str:
     """Format gap report as Obsidian markdown."""
     if report.get("status") == "no_data":
-        return "# Hanna Knowledge Gap Report\n\nNincs adat a megadott időszakban.\n"
+        return "# CC Knowledge Gap Report\n\nNincs adat a megadott időszakban.\n"
 
     lines = [
-        f"# Hanna Knowledge Gap Report",
+        f"# CC Knowledge Gap Report",
         f"",
         f"**Időszak:** {report['period_days']} nap ({report['period_start'][:10]} — {report['period_end'][:10]})",
         f"**Összes interakció:** {report['total_traces']}",

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Daily email history ingest for Hanna RAG
+# Daily email history ingest for CustomerCare RAG
 # Fetches sent items from the last 48h and ingests as Q&A chunks
 
 MAILBOX="lakossagitarolo@neuzrt.hu"

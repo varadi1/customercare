@@ -77,6 +77,10 @@ async def process_new_emails(hours: float = 4) -> dict[str, Any]:
 
     No OpenClaw agent needed — fully self-contained.
     """
+    from ..observability import trace_processor
+    proc_trace_ctx = trace_processor(batch_size=0)
+    proc_trace = await proc_trace_ctx.__aenter__()
+
     stats = {
         "started_at": datetime.now(timezone.utc).isoformat(),
         "emails_polled": 0,
@@ -104,10 +108,13 @@ async def process_new_emails(hours: float = 4) -> dict[str, Any]:
     all_messages = []
     for pr in poll_results:
         all_messages.extend(pr.messages)
+        proc_trace.poll(mailbox=pr.mailbox if hasattr(pr, 'mailbox') else "?", email_count=len(pr.messages))
     stats["emails_polled"] = len(all_messages)
 
     if not all_messages:
         logger.info("No new emails to process")
+        proc_trace.batch_complete(total=0)
+        await proc_trace_ctx.__aexit__(None, None, None)
         return stats
 
     # 2. Process each email
@@ -117,10 +124,12 @@ async def process_new_emails(hours: float = 4) -> dict[str, Any]:
             stats["details"].append(result)
 
             if result["status"] == "skipped":
+                proc_trace.email_skipped(subject=msg.subject if hasattr(msg, 'subject') else "", reason=result.get("skip_reason", ""))
                 stats["skipped"] += 1
                 reason = result.get("skip_reason", "unknown")
                 stats["skipped_reasons"][reason] = stats["skipped_reasons"].get(reason, 0) + 1
             elif result["status"] == "draft_created":
+                proc_trace.email_processed(subject=msg.subject if hasattr(msg, 'subject') else "", result="draft_created", confidence=result.get("confidence", ""))
                 stats["drafts_created"] += 1
                 conf = result.get("confidence", "medium")
                 if conf == "high":
@@ -163,6 +172,12 @@ async def process_new_emails(hours: float = 4) -> dict[str, Any]:
         stats["skipped"], stats["errors"],
     )
 
+    proc_trace.batch_complete(
+        total=stats["emails_polled"], drafted=stats["drafts_created"],
+        skipped=stats["skipped"], errors=stats["errors"],
+    )
+    await proc_trace_ctx.__aexit__(None, None, None)
+
     return stats
 
 
@@ -189,8 +204,8 @@ async def _process_single_email(msg) -> dict[str, Any]:
         result["skip_reason"] = skip_info["reason"]
         return result
 
-    # Step 2: Check if already has Hanna category (dedup)
-    if any(cat.startswith("Hanna -") for cat in (msg.categories or [])):
+    # Step 2: Check if already has CC category (dedup)
+    if any(cat.startswith("CC -") for cat in (msg.categories or [])):
         result["status"] = "skipped"
         result["skip_reason"] = "already_processed"
         return result
@@ -210,7 +225,7 @@ async def _process_single_email(msg) -> dict[str, Any]:
     ctx = await draft_context.build_draft_context(
         email_text=msg.body_text,
         email_subject=msg.subject,
-        oetp_ids=msg.oetp_ids,
+        app_ids=msg.app_ids,
         pod_numbers=msg.pod_numbers,
     )
 
@@ -249,7 +264,7 @@ async def _process_single_email(msg) -> dict[str, Any]:
         email_subject=msg.subject,
         sender_name=msg.sender,
         sender_email=msg.sender_email,
-        oetp_ids=msg.oetp_ids,
+        app_ids=msg.app_ids,
         ctx=ctx,
         image_context=image_context,
         legal_context=legal_context,
@@ -264,11 +279,11 @@ async def _process_single_email(msg) -> dict[str, Any]:
 
     # Step 6b: Identity guard — check OETP IDs in draft match the email
     import re as _re
-    draft_oetp_ids = set(_re.findall(r"OETP-\d{4}-\d+", draft_result.get("body_html", "")))
-    email_oetp_ids = set(msg.oetp_ids) if msg.oetp_ids else set()
-    if draft_oetp_ids and email_oetp_ids and not (draft_oetp_ids & email_oetp_ids):
+    draft_app_ids = set(_re.findall(r"OETP-\d{4}-\d+", draft_result.get("body_html", "")))
+    email_app_ids = set(msg.app_ids) if msg.app_ids else set()
+    if draft_app_ids and email_app_ids and not (draft_app_ids & email_app_ids):
         # Draft mentions different OETP IDs than the email — identity confusion!
-        logger.warning("Identity mismatch: draft has %s but email has %s", draft_oetp_ids, email_oetp_ids)
+        logger.warning("Identity mismatch: draft has %s but email has %s", draft_app_ids, email_app_ids)
         confidence = "low"
 
     result["confidence"] = confidence
@@ -315,7 +330,7 @@ async def _process_single_email(msg) -> dict[str, Any]:
                 conn=conn,
                 sender_name=msg.sender,
                 sender_email=msg.sender_email,
-                oetp_ids=msg.oetp_ids,
+                app_ids=msg.app_ids,
                 email_subject=msg.subject,
                 category=ctx.get("category", ""),
             )
@@ -349,20 +364,20 @@ async def _generate_draft_internal(
     email_subject: str,
     sender_name: str,
     sender_email: str,
-    oetp_ids: list[str],
+    app_ids: list[str],
     ctx: dict,
     image_context: str = "",
     legal_context: str = "",
 ) -> dict:
     """Generate draft using internal logic (same as /draft/generate but no HTTP)."""
-    # Use the Hanna API internally
+    # Use the CC API internally
     async with httpx.AsyncClient(timeout=120) as client:
         payload = {
             "email_text": email_text[:3000],
             "email_subject": email_subject,
             "sender_name": sender_name,
             "sender_email": sender_email,
-            "oetp_ids": oetp_ids,
+            "app_ids": app_ids,
             "top_k": 5,
             "max_context_chunks": 3,
         }
@@ -427,7 +442,7 @@ async def _send_discord_summary(stats: dict) -> None:
 
     emoji_map = {"high": "🟢", "medium": "🟡", "low": "🔴"}
     msg = (
-        f"📋 **Hanna OETP — Email feldolgozás**\n"
+        f"📋 **CC — Email feldolgozás**\n"
         f"📬 Új: {stats['emails_polled']} | "
         f"✅ Draft: {stats['drafts_created']} | "
         f"🟢 {stats['high_confidence']} | "

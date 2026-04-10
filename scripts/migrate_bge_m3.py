@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Migrate Hanna collection from OpenAI embeddings to BGE-M3.
+"""Migrate CustomerCare collection from OpenAI embeddings to BGE-M3.
 
-Creates hanna_knowledge_bge_m3 collection, re-embeds all chunks, verifies count.
+Creates cc_knowledge_bge_m3 collection, re-embeds all chunks, verifies count.
 """
 
 import json, urllib.request, sys, time
 
 CHROMA_BASE = "http://localhost:8100/api/v2/tenants/default_tenant/databases/default_database/collections"
 BGE_M3_URL = "http://localhost:8104"
-OLD_COLLECTION = "hanna_knowledge"
-NEW_COLLECTION = "hanna_knowledge_bge_m3"
+OLD_COLLECTION = "cc_knowledge"
+NEW_COLLECTION = "cc_knowledge_bge_m3"
 BATCH_SIZE = 50  # chunks per batch for embedding
 FETCH_BATCH = 100  # chunks per ChromaDB get
 
@@ -60,7 +60,7 @@ def get_count(col_id):
 
 
 def main():
-    print("=== Hanna BGE-M3 Migration ===\n")
+    print("=== CustomerCare BGE-M3 Migration ===\n")
 
     # 1. Get old collection
     old_id = get_collection_id(OLD_COLLECTION)

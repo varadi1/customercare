@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Hanna is a multi-layer RAG (Retrieval-Augmented Generation) backend for the OETP (Otthoni Energiatároló Program — Home Energy Storage Program) customer service. Built on FastAPI, it processes incoming emails, searches a knowledge base, generates draft responses, and saves them to Outlook 365 via MS Graph API. The system prioritizes hallucination-free, source-faithful answers with 15 verification layers and a 5-level closed-loop learning system that improves from human corrections.
+CustomerCare is a config-driven, multi-layer RAG (Retrieval-Augmented Generation) backend for customer service (forked from Hanna, the OETP-specific version). Built on FastAPI, it processes incoming emails, searches a knowledge base, generates draft responses, and saves them to Outlook 365 via MS Graph API. The system prioritizes hallucination-free, source-faithful answers with 15 verification layers and a 5-level closed-loop learning system that improves from human corrections.
 
 ## Common Commands
 
@@ -37,8 +37,8 @@ bash scripts/healthcheck_discord.sh    # Manual health check
 
 | Service | Port | Container | Runtime |
 |---------|------|-----------|---------|
-| **Hanna Backend** (FastAPI) | 8101 | cc-backend | Docker |
-| **Hanna DB** (PostgreSQL+pgvector) | 5438 | cc-db | Docker |
+| **CC Backend** (FastAPI) | 8101 | cc-backend | Docker |
+| **CC DB** (PostgreSQL+pgvector) | 5438 | cc-db | Docker |
 | **Langfuse** (observability) | 3001 | cc-langfuse | Docker |
 | **BGE-M3 Embedding** (search) | 8104 | — | macOS LaunchAgent, MPS GPU |
 | **BGE-M3 Embedding** (ingest) | 8114 | — | macOS LaunchAgent, MPS GPU |
@@ -65,7 +65,7 @@ Email → Skip filter (auto-reply, internal @neuzrt.hu, thank-you)
       → ⚖️ Legal risk check (eligibility claims → legal RAG verification)
       → SelfCheck (multi-sample consistency, medium conf only)
       → Final accent gate (drafts.py — blocks accent-free drafts entirely)
-      → Confidence routing (low → "Hanna - emberi válasz kell")
+      → Confidence routing (low → "CC - emberi válasz kell")
 ```
 
 ### Database (cc-db, PostgreSQL+pgvector :5438)
@@ -138,13 +138,13 @@ backend/db/
 - **Standalone DB** — `cc-db` container with own pgvector volume. Init script ensures DB survives rebuilds.
 - **Opus 4.6 primary** — Best instruction following for Hungarian customer service. Fallback: GPT-5.4, then Gemini.
 - **Depersonalized RAG** — Email chunks have PII removed (names, OETP IDs, emails, phones → placeholders). Prevents name confusion and OETP ID leakage in drafts.
-- **Skip over bad draft** — If Hanna can't answer properly (echo, irrelevant, insufficient), it skips instead of generating a bad draft. Better no draft than wrong draft.
+- **Skip over bad draft** — If CC can't answer properly (echo, irrelevant, insufficient), it skips instead of generating a bad draft. Better no draft than wrong draft.
 - **Deterministic greeting + signature** — Never trust LLM for these. Name extracted from email body signature first (most reliable), falls back to Graph API with Hungarian name order + accent fix. Company senders get "Tisztelt Partnerünk!". Full NEÜ signature block — all code-based.
 - **Legal risk check** — If draft makes eligibility claims (pályázhat, jogosult, támogatható), legal RAG (:8103) is consulted for contradictions. High risk → confidence=low.
 - **LLM retry** — Each provider tried twice (2s backoff) before fallback: Opus → GPT-5.4 → Gemini = 6 attempts total.
 - **LLM fail → skip** — If all providers fail, no draft created. Never dumps raw chunks as "response".
 - **Internal email skip** — Emails from @neuzrt.hu/@nffku.hu are skipped immediately (Step 0).
-- **No self-referencing** — Hanna replies FROM lakossagitarolo@neuzrt.hu, so never asks customers to "write to lakossagitarolo@neuzrt.hu".
+- **No self-referencing** — CC replies FROM the configured mailbox, so never asks customers to "write to" that address.
 - **Authority hierarchy** — felhívás (1.00) > melléklet (0.95) > közlemény (0.90) > GYIK (0.85) > segédlet (0.80) > dokumentum (0.55) > email (0.40/0.30).
 
 ## Learning System (5 levels)

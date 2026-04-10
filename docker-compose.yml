@@ -13,7 +13,7 @@ services:
       - cc-pgdata:/var/lib/postgresql/data
       - ./backend/db/init_customercare.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     ports:
-      - "5439:5432"
+      - "5440:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U klara -d customercare"]
       interval: 30s
@@ -31,12 +31,13 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8111:8000"
+      - "8113:8000"
     volumes:
       - ./data/documents:/app/documents
       - ./data:/app/data
       - ${REPORT_DIR:-./data/reports}:/app/reports
       - ./backend/scripts:/app/scripts:ro
+      - ./config:/app/config:ro
     environment:
       # Database
       - CC_PG_DSN=postgresql://klara:klara_docs_2026@cc-db:5432/customercare
@@ -56,6 +57,7 @@ services:
       - GRAPH_USER_EMAIL=${GRAPH_USER_EMAIL}
       - SHARED_MAILBOXES=${SHARED_MAILBOXES:-}
       # Program-specific external DB (optional)
+      - PROGRAM_DB_DRIVER=${PROGRAM_DB_DRIVER:-mysql}
       - PROGRAM_DB_HOST=${PROGRAM_DB_HOST:-}
       - PROGRAM_DB_PORT=${PROGRAM_DB_PORT:-3306}
       - PROGRAM_DB_USER=${PROGRAM_DB_USER:-}
@@ -68,7 +70,7 @@ services:
       # Notifications
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID}
-      # Langfuse (shared instance — Hanna's Langfuse on :3001)
+      # Langfuse (shared instance on :3001)
       - LANGFUSE_HOST=${LANGFUSE_HOST:-http://host.docker.internal:3001}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}

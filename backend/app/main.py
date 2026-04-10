@@ -1,4 +1,4 @@
-"""Hanna Backend — FastAPI REST API for RAG + Email."""
+"""CustomerCare Backend — FastAPI REST API for RAG + Email."""
 
 import asyncio
 import json
@@ -46,13 +46,13 @@ async def lifespan(app: FastAPI):
     # Verify PostgreSQL connection
     try:
         stats = await rag_search._get_collection_stats_async()
-        print(f"[hanna] PostgreSQL connected: {stats}")
+        print(f"[cc] PostgreSQL connected: {stats}")
     except Exception as e:
-        print(f"[hanna] WARNING: PostgreSQL not reachable: {e}")
+        print(f"[cc] WARNING: PostgreSQL not reachable: {e}")
     
     # Initialize reranker (local service with Cohere fallback)
     reranker_mode = await reranker.initialize()
-    print(f"[hanna] Reranker initialized: {reranker_mode}")
+    print(f"[cc] Reranker initialized: {reranker_mode}")
 
     # Start autonomous scheduler (if enabled)
     from .scheduler import start_scheduler, stop_scheduler
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Hanna Backend",
+    title="CustomerCare Backend",
     description="RAG pipeline + Email integration for OETP customer service",
     version="0.1.0",
     lifespan=lifespan,
@@ -258,9 +258,9 @@ async def search(query: SearchQuery):
             raw_refs = resolve_references_in_results(results, max_total_refs=5)
             ref_chunks = [ReferencedChunk(**r) for r in raw_refs]
             if ref_chunks:
-                print(f"[hanna] Resolved {len(ref_chunks)} cross-references")
+                print(f"[cc] Resolved {len(ref_chunks)} cross-references")
         except Exception as e:
-            print(f"[hanna] Cross-ref resolution failed: {e}")
+            print(f"[cc] Cross-ref resolution failed: {e}")
         
         # Score threshold filtering
         search_results = [SearchResult(**r) for r in results]
@@ -429,9 +429,9 @@ async def list_drafts_endpoint(mailbox: str, limit: int = 20):
 
 @app.post("/emails/mark-sent/{mailbox}")
 async def mark_sent_endpoint(mailbox: str, hours: int = 4):
-    """Check Sent Items and update original emails to 'Hanna - elküldve'.
+    """Check Sent Items and update original emails to 'CC - elküldve'.
     
-    Only modifies Hanna-prefixed categories, preserves all other categories.
+    Only modifies CC-prefixed categories, preserves all other categories.
     """
     try:
         result = await drafts.mark_sent_emails(mailbox, hours)
@@ -445,7 +445,7 @@ async def mark_sent_endpoint(mailbox: str, hours: int = 4):
 class DraftContextRequest(BaseModel):
     email_text: str
     email_subject: str = ""
-    oetp_ids: list[str] = []
+    app_ids: list[str] = []
     pod_numbers: list[str] = []
     top_k: int = 5
 
@@ -460,7 +460,7 @@ async def get_draft_context(req: DraftContextRequest):
         return await draft_context.build_draft_context(
             email_text=req.email_text,
             email_subject=req.email_subject,
-            oetp_ids=req.oetp_ids,
+            app_ids=req.app_ids,
             pod_numbers=req.pod_numbers,
             top_k=req.top_k,
         )
@@ -652,39 +652,49 @@ def _build_greeting(
     sender_name: str = "",
     category: str = "",
     email_body: str = "",
-    oetp_data: dict | None = None,
+    program_data: dict | None = None,
     sender_email: str = "",
 ) -> str:
-    """Build appropriate greeting.
+    """Build appropriate greeting using program.yaml config + DB data.
 
     Priority:
-    1. OETP DB name (sender email matches applicant or representative)
-    2. "Tisztelt Pályázó!" (OETP-ID present but no email match)
-    3. "Tisztelt Érdeklődő!" (no OETP-ID)
-
-    Email body signature and Graph API name are NOT used — too unreliable.
+    1. Program DB name (sender email matches applicant via identity_fields)
+    2. Default greeting from program.yaml (e.g. "Tisztelt Pályázó!")
+    3. Fallback greeting from program.yaml (e.g. "Tisztelt Érdeklődő!")
     """
-    has_oetp_id = bool(oetp_data and oetp_data.get("applications"))
+    from .config import get_program_config, get_db_config
 
-    # Priority 1: OETP DB — match sender email to applicant or representative
-    if has_oetp_id and sender_email:
+    pcfg = get_program_config()
+    email_cfg = pcfg.get("email", {}).get("greeting", {})
+    default_greeting = email_cfg.get("default", "Tisztelt Pályázó!")
+    # TODO: company_sender detection can be added here
+
+    db_cfg = get_db_config()
+    identity_fields = db_cfg.get("identity_fields", [])
+    has_app = bool(program_data and program_data.get("applications"))
+
+    # Priority 1: DB — match sender email to applicant/representative name
+    if has_app and sender_email and identity_fields:
         sender_lower = sender_email.strip().lower()
-        for app in oetp_data.get("applications", []):
-            applicant_email = (app.get("palyazo_email") or "").strip().lower()
-            representative_email = (app.get("megbizott_email") or "").strip().lower()
-            if sender_lower == representative_email and app.get("meghatalmazott_neve"):
-                name = _normalize_hungarian_name(app["meghatalmazott_neve"])
-                return f"Tisztelt {name}!"
-            if sender_lower == applicant_email and app.get("palyazo_neve"):
-                name = _normalize_hungarian_name(app["palyazo_neve"])
-                return f"Tisztelt {name}!"
+        # Build name field candidates: identity_field → name field mapping
+        # e.g. "applicant_email" → "applicant_name", "representative_email" → "representative_name"
+        for app in program_data.get("applications", []):
+            for email_field in identity_fields:
+                db_email = (app.get(email_field) or "").strip().lower()
+                if sender_lower == db_email:
+                    # Find corresponding name field
+                    name_field = email_field.replace("_email", "_name")
+                    name = app.get(name_field) or app.get("applicant_name", "")
+                    if name:
+                        name = _normalize_hungarian_name(name)
+                        return f"Tisztelt {name}!"
 
-    # Priority 2: OETP-ID present → "Pályázó"
-    if has_oetp_id:
-        return "Tisztelt Pályázó!"
+    # Priority 2: Has app ID → default greeting
+    if has_app:
+        return default_greeting
 
-    # Priority 3: No OETP-ID → "Érdeklődő"
-    return "Tisztelt Érdeklődő!"
+    # Priority 3: No app ID → fallback
+    return default_greeting
 
 
 def _normalize_hungarian_name(name: str) -> str:
@@ -1024,7 +1034,7 @@ class DraftGenerateRequest(BaseModel):
     email_subject: str = ""
     sender_name: str = ""
     sender_email: str = ""
-    oetp_ids: list[str] = []
+    app_ids: list[str] = []
     pod_numbers: list[str] = []
     top_k: int = 5
     max_context_chunks: int = 3
@@ -1047,7 +1057,7 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
     ctx = await draft_context.build_draft_context(
         email_text=req.email_text,
         email_subject=req.email_subject,
-        oetp_ids=req.oetp_ids,
+        app_ids=req.app_ids,
         pod_numbers=req.pod_numbers,
         top_k=req.top_k,
     )
@@ -1081,7 +1091,7 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
                     conn=_econn,
                     sender_name=req.sender_name,
                     sender_email=req.sender_email,
-                    oetp_ids=req.oetp_ids,
+                    app_ids=req.app_ids,
                     email_subject=req.email_subject,
                     category=ctx.get("category", ""),
                 )
@@ -1107,20 +1117,28 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
     # Langfuse: log search results
     lf_trace.search(rag_results, req.email_text[:200])
 
-    # Fetch OETP applicant data EARLY — needed for greeting + LLM context
-    _oetp_data = {}
+    # Fetch program applicant data EARLY — needed for greeting + LLM context
+    _program_data = {}
     try:
+        import time as _time
+        _db_t0 = _time.time()
         from app.reasoning.radix_client import enrich_draft_context
-        _oetp_data = await enrich_draft_context(oetp_ids=req.oetp_ids, sender_email=req.sender_email)
+        _program_data = await enrich_draft_context(app_ids=req.app_ids, sender_email=req.sender_email)
+        _db_ms = int((_time.time() - _db_t0) * 1000)
+        lf_trace.db_enrichment(
+            app_ids=req.app_ids,
+            found=len(_program_data.get("applications", [])) + len(_program_data.get("sender_applications", [])),
+            duration_ms=_db_ms,
+        )
     except Exception:
         pass
 
-    # Smart greeting: OETP DB name > email body signature > Graph API > category-based
+    # Smart greeting: program DB name > email body signature > Graph API > category-based
     greeting = _build_greeting(
         sender_name=req.sender_name,
         category=ctx.get("category", ""),
         email_body=req.email_text,
-        oetp_data=_oetp_data,
+        program_data=_program_data,
         sender_email=req.sender_email,
     )
 
@@ -1155,20 +1173,24 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
             except (ValueError, TypeError):
                 pass
     if stale_chunks:
-        print(f"[hanna] Stale chunks in top results: {stale_chunks}")
+        print(f"[cc] Stale chunks in top results: {stale_chunks}")
 
     # 2. Try VerbatimRAG for verified fact extraction
     verified_facts = []
     fact_sources = []
     try:
+        import time as _time
+        _vr_t0 = _time.time()
         verbatim_url = os.getenv("VERBATIM_SERVICE_URL", "http://host.docker.internal:8108")
         async with httpx.AsyncClient(timeout=5) as vc:
             vr = await vc.post(f"{verbatim_url}/extract", json={
                 "question": req.email_text[:2000],
                 "chunks": [r.get("text", "") for r in top_chunks],
             })
+            _vr_ms = int((_time.time() - _vr_t0) * 1000)
             if vr.status_code == 200:
                 vdata = vr.json()
+                lf_trace.external_service("verbatim_rag", result={"total_spans": vdata.get("total_spans", 0), "has_answer": vdata.get("has_answer")}, duration_ms=_vr_ms, url=verbatim_url)
                 if vdata.get("has_answer") and vdata.get("total_spans", 0) > 0:
                     for sr in vdata["results"]:
                         idx = sr["chunk_index"]
@@ -1184,8 +1206,11 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
                                 "quote": span,
                                 "verified": True,
                             })
+            else:
+                lf_trace.external_service("verbatim_rag", status=f"http_{vr.status_code}", duration_ms=_vr_ms, url=verbatim_url)
     except Exception as e:
-        print(f"[hanna] VerbatimRAG unavailable: {e}")
+        lf_trace.external_service("verbatim_rag", status="error", url=os.getenv("VERBATIM_SERVICE_URL", ""))
+        print(f"[cc] VerbatimRAG unavailable: {e}")
 
     # Fallback: if VerbatimRAG failed, use raw chunk texts — but mark clearly as unverified
     verbatim_available = bool(verified_facts)
@@ -1213,7 +1238,7 @@ async def _draft_generate_impl(req: DraftGenerateRequest, lf_trace):
         program_counts[prog] = program_counts.get(prog, 0) + 1
     dominant_program = max(program_counts, key=program_counts.get) if program_counts else "OETP"
     if dominant_program != "OETP" and program_counts.get(dominant_program, 0) > len(top_chunks) // 2:
-        print(f"[hanna] WARNING: chunks dominated by {dominant_program}, not OETP")
+        print(f"[cc] WARNING: chunks dominated by {dominant_program}, not OETP")
 
     # 3. Build LLM prompt with verified facts
     facts_block = ""
@@ -1236,10 +1261,10 @@ Tárgy: {req.email_subject}
     # 3b. OETP applicant data (already fetched above for greeting)
     try:
         from app.reasoning.radix_client import format_applicant_context
-        if _oetp_data:
-            for app in _oetp_data.get("applications", []):
+        if _program_data:
+            for app in _program_data.get("applications", []):
                 user_msg += "\n\n" + format_applicant_context(app, sender_email=req.sender_email)
-            for app in _oetp_data.get("sender_applications", []):
+            for app in _program_data.get("sender_applications", []):
                 user_msg += "\n\n" + format_applicant_context(app, sender_email=req.sender_email)
     except Exception:
         pass
@@ -1281,17 +1306,17 @@ Tárgy: {req.email_subject}
             try:
                 import json_repair
                 draft_data = json_repair.loads(raw)
-                print(f"[hanna] JSON repaired successfully (provider={llm_provider})")
+                print(f"[cc] JSON repaired successfully (provider={llm_provider})")
             except Exception:
                 # Last resort: log and re-raise
-                print(f"[hanna] RAW LLM OUTPUT (failed to parse): {raw[:500]}")
+                print(f"[cc] RAW LLM OUTPUT (failed to parse): {raw[:500]}")
                 raise
 
         # Langfuse: log LLM call
-        lf_trace.llm(model=llm_model, provider=llm_provider)
+        lf_trace.llm(model=llm_model, provider=llm_provider, usage=llm_result.get("usage"))
     except Exception as e:
         # LLM failed — SKIP, never dump raw chunks as a "response"
-        print(f"[hanna] LLM FAILED: {e} — skipping draft (no raw chunk dump)")
+        print(f"[cc] LLM FAILED: {e} — skipping draft (no raw chunk dump)")
         return {
             "skip": True,
             "skip_reason": f"llm_failed: {e}",
@@ -1324,7 +1349,7 @@ Tárgy: {req.email_subject}
     # 4c. Citation validation — check that inline [N] refs exist and map to real facts
     citation_warnings = _validate_citations(body_html, verified_facts, citations)
     if citation_warnings.get("uncited_claims"):
-        print(f"[hanna] Citation warning: {citation_warnings['uncited_claims']} uncited claims")
+        print(f"[cc] Citation warning: {citation_warnings['uncited_claims']} uncited claims")
         if confidence == "high":
             confidence = "medium"
 
@@ -1334,13 +1359,14 @@ Tárgy: {req.email_subject}
         body_html=body_html,
         verified_facts=verified_facts,
         top_chunks=top_chunks,
-        email_oetp_ids=req.oetp_ids or None,
+        email_app_ids=req.app_ids or None,
         email_text=req.email_text,
         citations=citations,
     )
+    lf_trace.guardrails(result=guardrails_result, warnings=guardrails_result.get("warnings"))
     if not guardrails_result["pass"]:
         for w in guardrails_result["warnings"]:
-            print(f"[hanna] Guardrail {w['rule']}: {w['detail']}")
+            print(f"[cc] Guardrail {w['rule']}: {w['detail']}")
         if guardrails_result["suggested_confidence"] == "low":
             confidence = "low"
         elif guardrails_result["suggested_confidence"] == "medium" and confidence == "high":
@@ -1351,13 +1377,15 @@ Tárgy: {req.email_subject}
     _plain_text = re.sub(r"<[^>]+>", "", body_html)
     if len(_plain_text) > 80 and not any(c in _accent_chars for c in _plain_text):
         # LLM generated accent-free text — this should never happen but guard against it
-        print(f"[hanna] WARNING: accent-free draft detected, forcing low confidence")
+        print(f"[cc] WARNING: accent-free draft detected, forcing low confidence")
         confidence = "low"
 
     # 5. NLI faithfulness verification
     nli_result = None
     nli_failed = False
     try:
+        import time as _time
+        _nli_t0 = _time.time()
         chunk_texts = " ".join(f["text"] for f in verified_facts)
         nli_url = os.getenv("NLI_SERVICE_URL", "http://host.docker.internal:8107")
         async with httpx.AsyncClient(timeout=10) as nli_client:
@@ -1365,22 +1393,26 @@ Tárgy: {req.email_subject}
                 "answer": body_html,
                 "context": chunk_texts,
             })
+            _nli_ms = int((_time.time() - _nli_t0) * 1000)
             if nli_resp.status_code == 200:
                 nli_result = nli_resp.json()
+                lf_trace.external_service("nli_faithfulness", result=nli_result, duration_ms=_nli_ms, url=nli_url)
                 if nli_result.get("overall_verdict") == "unfaithful":
                     confidence = "low"
-                    print(f"[hanna] NLI: unfaithful → confidence=low")
+                    print(f"[cc] NLI: unfaithful → confidence=low")
             else:
+                lf_trace.external_service("nli_faithfulness", status=f"http_{nli_resp.status_code}", duration_ms=_nli_ms, url=nli_url)
                 nli_failed = True
     except Exception as e:
+        lf_trace.external_service("nli_faithfulness", status="error", url=os.getenv("NLI_SERVICE_URL", ""))
         nli_failed = True
-        print(f"[hanna] NLI service unavailable: {e}")
+        print(f"[cc] NLI service unavailable: {e}")
 
     # NLI fail + no VerbatimRAG = double-blind — downgrade confidence
     if nli_failed and not verbatim_available:
         if confidence == "high":
             confidence = "medium"
-            print(f"[hanna] No NLI + no VerbatimRAG → confidence downgraded to medium")
+            print(f"[cc] No NLI + no VerbatimRAG → confidence downgraded to medium")
 
     # 6. CoVe (Chain of Verification) — runs for non-high confidence drafts
     cove_result = None
@@ -1388,17 +1420,17 @@ Tárgy: {req.email_subject}
         try:
             from .rag.cove import verify_draft
             _draft_plain = re.sub(r"<[^>]+>", "", body_html)
-            cove_result = await verify_draft(_draft_plain, verified_facts)
+            cove_result = await verify_draft(_draft_plain, verified_facts, lf_trace=lf_trace)
             if cove_result.get("issue_count", 0) > 0:
                 issues = cove_result["issues"]
                 contradicted = [i for i in issues if i.get("verdict") == "contradicted"]
                 if contradicted:
                     confidence = "low"
-                    print(f"[hanna] CoVe: {len(contradicted)} CONTRADICTED claims → confidence=low")
+                    print(f"[cc] CoVe: {len(contradicted)} CONTRADICTED claims → confidence=low")
                 else:
-                    print(f"[hanna] CoVe: {len(issues)} unsupported claims (no contradiction)")
+                    print(f"[cc] CoVe: {len(issues)} unsupported claims (no contradiction)")
         except Exception as e:
-            print(f"[hanna] CoVe failed (non-blocking): {e}")
+            print(f"[cc] CoVe failed (non-blocking): {e}")
 
     # 7. Answer-Question Alignment — does the draft actually answer the question?
     alignment_result = None
@@ -1406,13 +1438,13 @@ Tárgy: {req.email_subject}
         try:
             from .rag.answer_alignment import check_alignment
             _draft_plain = re.sub(r"<[^>]+>", "", body_html)
-            alignment_result = await check_alignment(req.email_text, _draft_plain)
+            alignment_result = await check_alignment(req.email_text, _draft_plain, lf_trace=lf_trace)
             if not alignment_result.get("aligned", True):
                 verdict = alignment_result.get("verdict", "?")
                 reason = alignment_result.get("reason", "")
                 if verdict == "echoes":
                     # Draft just repeats what customer said — useless, skip it
-                    print(f"[hanna] Alignment: ECHOES ({reason}) → skip")
+                    print(f"[cc] Alignment: ECHOES ({reason}) → skip")
                     return {
                         "skip": True,
                         "skip_reason": f"echo_detected: {reason}",
@@ -1422,7 +1454,7 @@ Tárgy: {req.email_subject}
                         "method": "skip_echo",
                     }
                 elif verdict == "irrelevant":
-                    print(f"[hanna] Alignment: IRRELEVANT ({reason}) → skip")
+                    print(f"[cc] Alignment: IRRELEVANT ({reason}) → skip")
                     return {
                         "skip": True,
                         "skip_reason": f"irrelevant_answer: {reason}",
@@ -1432,7 +1464,7 @@ Tárgy: {req.email_subject}
                         "method": "skip_irrelevant",
                     }
         except Exception as e:
-            print(f"[hanna] Alignment check failed (non-blocking): {e}")
+            print(f"[cc] Alignment check failed (non-blocking): {e}")
 
     # 8. Legal risk check — verify eligibility claims against legal RAG
     legal_check_result = None
@@ -1443,15 +1475,15 @@ Tárgy: {req.email_subject}
             legal_check_result = await check_legal_risk(
                 draft_text=_draft_plain,
                 email_text=req.email_text,
-                oetp_ids=req.oetp_ids,
+                app_ids=req.app_ids,
             )
             if legal_check_result.get("risk_level") == "high":
                 confidence = "low"
-                print(f"[hanna] ⚖️ LEGAL RISK: {legal_check_result['recommendation']}")
+                print(f"[cc] ⚖️ LEGAL RISK: {legal_check_result['recommendation']}")
             elif legal_check_result.get("has_legal_claims"):
-                print(f"[hanna] Legal claims detected: {legal_check_result['claims_found'][:3]}")
+                print(f"[cc] Legal claims detected: {legal_check_result['claims_found'][:3]}")
         except Exception as e:
-            print(f"[hanna] Legal check failed (non-blocking): {e}")
+            print(f"[cc] Legal check failed (non-blocking): {e}")
 
     # 9. SelfCheck — multi-sample consistency (only for medium, cost control)
     selfcheck_result = None
@@ -1462,20 +1494,22 @@ Tárgy: {req.email_subject}
                 messages=messages,
                 original_response=raw_body,
                 n_samples=2,
+                lf_trace=lf_trace,
             )
             if not selfcheck_result.get("consistent", True):
                 confidence = "low"
-                print(f"[hanna] SelfCheck: INCONSISTENT (min_sim={selfcheck_result['min_similarity']}) → confidence=low")
+                print(f"[cc] SelfCheck: INCONSISTENT (min_sim={selfcheck_result['min_similarity']}) → confidence=low")
         except Exception as e:
-            print(f"[hanna] SelfCheck failed (non-blocking): {e}")
+            print(f"[cc] SelfCheck failed (non-blocking): {e}")
 
     # Final confidence gate — "low" → route to human review
-    draft_category = "Hanna - draft kész"
+    draft_category = "CC - draft kész"
     if confidence == "low":
-        draft_category = "Hanna - emberi válasz kell"
+        draft_category = "CC - emberi válasz kell"
 
     # Langfuse: log verification results + output
-    lf_trace.verify(nli_result=nli_result, cove_result=cove_result, guardrails=guardrails_result)
+    lf_trace.verify(nli_result=nli_result, cove_result=cove_result, guardrails=guardrails_result,
+                     selfcheck=selfcheck_result, alignment=alignment_result, legal=legal_check_result)
     lf_trace.output(body_html=body_html, confidence=confidence, category=draft_category)
 
     return {
@@ -1516,7 +1550,7 @@ def _default_feedback_mailbox() -> str:
 
 @app.post("/emails/feedback/check")
 async def feedback_check(mailbox: str | None = None, hours: int = 48):
-    """Compare sent emails with stored Hanna drafts.
+    """Compare sent emails with stored CC drafts.
     
     Returns how many drafts were accepted unchanged vs modified.
     Mailbox defaults to the first SHARED_MAILBOXES entry if not specified.
@@ -1534,7 +1568,7 @@ async def feedback_check(mailbox: str | None = None, hours: int = 48):
 async def knowledge_gaps(days: int = 7):
     """Generate knowledge gap report from reasoning traces.
 
-    Identifies topics where Hanna struggles (REJECTED, low confidence).
+    Identifies topics where CC struggles (REJECTED, low confidence).
     """
     try:
         from app.reasoning.knowledge_gaps import generate_gap_report
@@ -1834,7 +1868,7 @@ async def cross_rag_entity(canonical_id: int):
 
 # ─── Structured Answer Generation (#7) ──────────────────────────────────────
 
-HANNA_ANSWER_SYSTEM_PROMPT = """Te az OETP (Otthoni Energiatároló Program) ügyfélszolgálati asszisztens vagy. A pályázók kérdéseire KIZÁRÓLAG a megadott forrás-chunkök alapján válaszolsz.
+CC_ANSWER_SYSTEM_PROMPT = """Te az OETP (Otthoni Energiatároló Program) ügyfélszolgálati asszisztens vagy. A pályázók kérdéseire KIZÁRÓLAG a megadott forrás-chunkök alapján válaszolsz.
 
 SZABÁLYOK:
 1. CSAK a [FORRÁS] blokkokban szereplő információk alapján válaszolj
@@ -1855,7 +1889,7 @@ VÁLASZ FORMÁTUM (szigorúan JSON):
   "unanswered_parts": null
 }"""
 
-HANNA_ANSWER_FEWSHOT = [
+CC_ANSWER_FEWSHOT = [
     {
         "role": "user",
         "content": """Kérdés: Mekkora a támogatás maximális összege?
@@ -1935,7 +1969,7 @@ def _select_model(query_type: str, top_score: float, default_model: str) -> str:
     return default_model
 
 
-class HannaAnswerRequest(BaseModel):
+class CCAnswerRequest(BaseModel):
     query: str
     top_k: int = 5
     category: str | None = None
@@ -1945,7 +1979,7 @@ class HannaAnswerRequest(BaseModel):
 
 
 @app.post("/answer")
-async def answer_endpoint(req: HannaAnswerRequest):
+async def answer_endpoint(req: CCAnswerRequest):
     """Search + LLM structured answer with grounding and hallucination control."""
     # 1. Search
     results = await rag_search.search_async(
@@ -2035,8 +2069,8 @@ async def answer_endpoint(req: HannaAnswerRequest):
 
     try:
         messages = [
-            {"role": "system", "content": HANNA_ANSWER_SYSTEM_PROMPT},
-            *HANNA_ANSWER_FEWSHOT,
+            {"role": "system", "content": CC_ANSWER_SYSTEM_PROMPT},
+            *CC_ANSWER_FEWSHOT,
             {"role": "user", "content": user_msg},
         ]
         llm_result = await chat_completion(
@@ -2115,10 +2149,10 @@ async def eval_live(
     report: bool = False,
     background_tasks: BackgroundTasks = None,
 ):
-    """Run live email evaluation (compares Hanna drafts vs actual colleague answers).
+    """Run live email evaluation (compares CC drafts vs actual colleague answers).
 
     This is the end-to-end quality check: fetches recent sent emails, extracts
-    the customer question, generates a Hanna draft, and compares it against
+    the customer question, generates a CC draft, and compares it against
     the actual answer using semantic + style + term overlap metrics.
 
     Use limit=20 for a quick check, limit=250 for full eval.

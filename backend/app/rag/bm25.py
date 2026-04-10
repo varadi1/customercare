@@ -94,7 +94,7 @@ class BM25Index:
             self._bm25 = None
 
         self._dirty = False
-        print(f"[hanna] BM25 index loaded: {len(self._docs)} documents")
+        print(f"[cc] BM25 index loaded: {len(self._docs)} documents")
 
     def search(self, query: str, top_k: int = 40) -> list[dict]:
         """BM25 keyword search.

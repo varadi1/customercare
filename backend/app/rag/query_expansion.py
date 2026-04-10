@@ -98,7 +98,7 @@ def expand_query(query: str) -> list[str]:
         return [query]
 
     except Exception as e:
-        print(f"[hanna] Query expansion failed, using original: {e}")
+        print(f"[cc] Query expansion failed, using original: {e}")
         return [query]
 
 
@@ -141,5 +141,5 @@ async def expand_query_async(query: str) -> list[str]:
         return [query]
 
     except Exception as e:
-        print(f"[hanna] Async query expansion failed: {e}")
+        print(f"[cc] Async query expansion failed: {e}")
         return [query]

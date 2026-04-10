@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Evaluate base vs fine-tuned reranker on Hanna's golden set.
+Evaluate base vs fine-tuned reranker on CustomerCare golden set.
 
 Usage:
   python scripts/eval_reranker.py

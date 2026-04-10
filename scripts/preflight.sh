@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Hanna — Pre-flight Health Check
+# CustomerCare — Pre-flight Health Check
 # =============================================================================
 # Validates all services and dependencies before starting.
 # Run before docker compose up or after install.
@@ -10,7 +10,7 @@
 # =============================================================================
 
 set -u
-HANNA_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,23 +24,23 @@ ok()   { echo -e "  ${GREEN}✅${NC} $1"; }
 warn() { echo -e "  ${YELLOW}⚠️${NC}  $1"; WARNINGS=$((WARNINGS+1)); }
 fail() { echo -e "  ${RED}❌${NC} $1"; ERRORS=$((ERRORS+1)); }
 
-echo "=== Hanna Pre-flight Check ==="
+echo "=== CustomerCare Pre-flight Check ==="
 echo ""
 
 # --- 1. .env file ---
 echo "[1/7] Environment"
-if [ -f "$HANNA_DIR/.env" ]; then
+if [ -f "$CC_DIR/.env" ]; then
     ok ".env exists"
     # Check critical keys
     for key in OPENAI_API_KEY ANTHROPIC_API_KEY GRAPH_TENANT_ID GRAPH_CLIENT_ID GRAPH_CLIENT_SECRET GRAPH_USER_EMAIL; do
-        val=$(grep "^${key}=" "$HANNA_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
+        val=$(grep "^${key}=" "$CC_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
         if [ -z "$val" ]; then
             fail "$key not set in .env"
         fi
     done
     # Optional keys
     for key in GOOGLE_API_KEY DISCORD_BOT_TOKEN COHERE_API_KEY; do
-        val=$(grep "^${key}=" "$HANNA_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
+        val=$(grep "^${key}=" "$CC_DIR/.env" 2>/dev/null | cut -d'=' -f2-)
         if [ -z "$val" ]; then
             warn "$key not set (optional)"
         fi
@@ -119,7 +119,7 @@ echo "[6/7] Native Service Files"
 for dir_name in "BGE-M3 Search:local_llm/bge_m3" "BGE-M3 Ingest:local_llm/bge_m3_ingest" "Reranker:local_llm/reranker"; do
     name="${dir_name%%:*}"
     rel="${dir_name##*:}"
-    parent="$(dirname "$HANNA_DIR")"
+    parent="$(dirname "$CC_DIR")"
     dir="$parent/$rel"
     if [ -d "$dir" ]; then
         ok "$name dir exists ($dir)"
@@ -137,7 +137,7 @@ done
 echo ""
 echo "[7/7] LaunchAgents"
 
-for la in com.openclaw.bge-m3 com.openclaw.bge-m3-ingest com.openclaw.hanna-reranker com.openclaw.hanna-healthcheck com.openclaw.nffku-monitor; do
+for la in com.openclaw.bge-m3 com.openclaw.bge-m3-ingest com.openclaw.bge-reranker com.openclaw.cc-healthcheck com.openclaw.nffku-monitor; do
     if launchctl list "$la" &>/dev/null; then
         ok "$la loaded"
     else

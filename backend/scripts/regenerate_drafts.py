@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Regenerate all existing Hanna drafts in the Drafts folder.
+Regenerate all existing CC drafts in the Drafts folder.
 
-Fetches each Hanna draft → finds the original email it replies to →
+Fetches each CC draft → finds the original email it replies to →
 calls /draft/generate with the original email text → overwrites the draft body.
 
 Usage:
@@ -26,7 +26,7 @@ logger = logging.getLogger("regenerate_drafts")
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
-async def get_hanna_drafts(headers: dict, mailbox: str) -> list[dict]:
+async def get_cc_drafts(headers: dict, mailbox: str) -> list[dict]:
     """Fetch all drafts from the Drafts folder."""
     import httpx
 
@@ -160,7 +160,7 @@ def _html_to_text(html: str) -> str:
     return BeautifulSoup(html, "html.parser").get_text(separator="\n", strip=True)
 
 
-def _extract_oetp_ids(text: str) -> list[str]:
+def _extract_app_ids(text: str) -> list[str]:
     """Extract OETP-YYYY-NNNNN IDs from text."""
     return list(set(re.findall(r"OETP-\d{4}-\d+", text)))
 
@@ -183,7 +183,7 @@ async def regenerate_draft(
     email_subject = original["subject"]
     sender_name = original["sender_name"]
     sender_email = original["sender_email"]
-    oetp_ids = _extract_oetp_ids(email_text + " " + email_subject)
+    app_ids = _extract_app_ids(email_text + " " + email_subject)
 
     # Call /draft/generate endpoint
     async with httpx.AsyncClient(timeout=120, base_url="http://localhost:8000") as client:
@@ -192,7 +192,7 @@ async def regenerate_draft(
             "email_subject": email_subject,
             "sender_name": sender_name,
             "sender_email": sender_email,
-            "oetp_ids": oetp_ids,
+            "app_ids": app_ids,
         })
         if resp.status_code != 200:
             return {"status": "error", "error": f"generate failed: {resp.status_code}"}
@@ -259,7 +259,7 @@ async def regenerate_draft(
                 f'</div>'
             )
 
-        # Step 4: Update the body with Hanna's response + preserved thread
+        # Step 4: Update the body with CC response + preserved thread
         combined_body = new_body_html + quoted_thread
 
         update_resp = await client.patch(
@@ -313,7 +313,7 @@ def _extract_quoted_thread(html: str) -> str:
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Regenerate Hanna drafts")
+    parser = argparse.ArgumentParser(description="Regenerate CC drafts")
     parser.add_argument("--mailbox", type=str, default="", help="Specific mailbox (default: all shared)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would change, don't update")
     args = parser.parse_args()
@@ -333,8 +333,8 @@ async def main():
     for mb in mailboxes:
         logger.info("=== Mailbox: %s ===", mb)
 
-        drafts = await get_hanna_drafts(headers, mb)
-        logger.info("Found %d Hanna drafts", len(drafts))
+        drafts = await get_cc_drafts(headers, mb)
+        logger.info("Found %d CC drafts", len(drafts))
         total["found"] += len(drafts)
 
         for i, draft in enumerate(drafts, 1):
@@ -351,9 +351,9 @@ async def main():
                 continue
 
             logger.info("  Original from: %s <%s>", original["sender_name"], original["sender_email"])
-            oetp_ids = _extract_oetp_ids(original["body_text"] + " " + subject)
-            if oetp_ids:
-                logger.info("  OETP IDs: %s", oetp_ids)
+            app_ids = _extract_app_ids(original["body_text"] + " " + subject)
+            if app_ids:
+                logger.info("  OETP IDs: %s", app_ids)
 
             # Regenerate
             result = await regenerate_draft(headers, mb, draft, original, dry_run=args.dry_run)

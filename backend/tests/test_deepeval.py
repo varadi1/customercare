@@ -1,6 +1,6 @@
-"""DeepEval RAG quality tests for Hanna OETP.
+"""DeepEval RAG quality tests for CustomerCare.
 
-Runs against the live Hanna API (localhost:8101).
+Runs against the live CC API (localhost:8101).
 Tests: Faithfulness, Answer Relevancy, Hallucination detection.
 
 Usage:
@@ -30,7 +30,7 @@ from deepeval.metrics import (
     HallucinationMetric,
 )
 
-HANNA_URL = os.getenv("HANNA_URL", "http://localhost:8101")
+CC_URL = os.getenv("CC_URL", "http://localhost:8101")
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 
 # Use gpt-4o-mini for evaluation (cost-effective, good enough for eval)
@@ -46,9 +46,9 @@ def _html_to_text(html: str) -> str:
 
 
 def _generate_draft(question: str, subject: str = "") -> dict:
-    """Call Hanna /draft/generate and return the result."""
+    """Call CC /draft/generate and return the result."""
     r = httpx.post(
-        f"{HANNA_URL}/draft/generate",
+        f"{CC_URL}/draft/generate",
         json={
             "email_text": question[:3000],
             "email_subject": subject,
@@ -63,9 +63,9 @@ def _generate_draft(question: str, subject: str = "") -> dict:
 
 
 def _search(query: str, top_k: int = 5) -> list[dict]:
-    """Call Hanna /search."""
+    """Call CC /search."""
     r = httpx.post(
-        f"{HANNA_URL}/search",
+        f"{CC_URL}/search",
         json={"query": query, "top_k": top_k},
         timeout=60,
     )
@@ -102,7 +102,7 @@ def _build_test_cases() -> list[tuple[str, LLMTestCase]]:
         if not expected:
             continue
 
-        # Generate Hanna draft
+        # Generate CC draft
         result = _generate_draft(question, subject)
 
         if result.get("skip"):

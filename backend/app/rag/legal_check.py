@@ -38,14 +38,14 @@ LEGAL_RAG_URL = "http://host.docker.internal:8103"
 async def check_legal_risk(
     draft_text: str,
     email_text: str,
-    oetp_ids: list[str] | None = None,
+    app_ids: list[str] | None = None,
 ) -> dict:
     """Check if the draft makes legally risky claims.
 
     Args:
         draft_text: The generated draft (plain text)
         email_text: The original customer email
-        oetp_ids: OETP application IDs from the email
+        app_ids: Program application IDs from the email
 
     Returns:
         {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DSPy prompt optimization CLI for Hanna.
+DSPy prompt optimization CLI for CustomerCare.
 
 Usage:
   python scripts/run_dspy_optimization.py --min-pairs 30
@@ -25,7 +25,7 @@ logger = logging.getLogger("dspy_optimization")
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="DSPy prompt optimization for Hanna")
+    parser = argparse.ArgumentParser(description="DSPy prompt optimization for CustomerCare")
     parser.add_argument("--min-pairs", type=int, default=30, help="Minimum training pairs required")
     parser.add_argument("--max-pairs", type=int, default=200, help="Maximum training pairs to use")
     parser.add_argument("--days", type=int, default=90, help="Look-back period in days")

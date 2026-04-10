@@ -18,7 +18,7 @@ async def main():
     md = format_obsidian_report(report)
     date_str = datetime.utcnow().strftime("%y%m%d")
     OBSIDIAN_REPORTS.mkdir(parents=True, exist_ok=True)
-    (OBSIDIAN_REPORTS / f"{date_str}-hanna-knowledge-gaps.md").write_text(md, encoding="utf-8")
+    (OBSIDIAN_REPORTS / f"{date_str}-cc-knowledge-gaps.md").write_text(md, encoding="utf-8")
     print(f"Report saved. Traces: {report['total_traces']}, Success: {report['success_rate']:.0%}")
 
     from app.reasoning.authority_learner import refresh_adjustments_cache

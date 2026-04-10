@@ -36,11 +36,11 @@ async def initialize() -> str:
     if await _check_local_reranker():
         _local_available = True
         _mode = "local"
-        print("[hanna] Reranker: Using LOCAL BGE reranker v2-m3 service (:8102)")
+        print("[cc] Reranker: Using LOCAL BGE reranker v2-m3 service (:8102)")
         return "local"
 
     _mode = "none"
-    print("[hanna] Reranker: Local service not available — returning unranked results (NO Cohere fallback)")
+    print("[cc] Reranker: Local service not available — returning unranked results (NO Cohere fallback)")
     return "none"
 
 
@@ -66,7 +66,7 @@ async def rerank(
             _local_available_update = True
             globals()['_local_available'] = True
             _mode = "local"
-            print("[hanna] Reranker: Local service recovered (:8102)")
+            print("[cc] Reranker: Local service recovered (:8102)")
         else:
             return documents[:top_n]
 
@@ -74,7 +74,7 @@ async def rerank(
     if result is not None:
         return result
 
-    print("[hanna] Local rerank failed, returning unranked results")
+    print("[cc] Local rerank failed, returning unranked results")
     return documents[:top_n]
 
 
@@ -113,7 +113,7 @@ async def _rerank_local(
         return reranked
 
     except Exception as e:
-        print(f"[hanna] Local reranker error: {e}")
+        print(f"[cc] Local reranker error: {e}")
         return None
 
 

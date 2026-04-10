@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hanna eval — compare drafts vs colleague answers from SentItems.
+"""CustomerCare eval — compare drafts vs colleague answers from SentItems.
 Extracts question from quoted text in sent reply body.
 Usage: python3 scripts/eval_100_emails.py [--limit 100] [--days 30]"""
 from __future__ import annotations
@@ -12,7 +12,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-HANNA_URL = "http://localhost:8000"
+CC_URL = "http://localhost:8000"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 OBSIDIAN_REPORTS = Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/PARA/!inbox/!reports"
 from app.email.auth import get_auth_headers
@@ -87,7 +87,7 @@ async def run(limit=100, days=30):
         try:
             t0 = time.time()
             async with httpx.AsyncClient(timeout=120) as c:
-                r = await c.post(f"{HANNA_URL}/draft/generate", json={"email_text":question[:3000],"email_subject":subject.replace("RE: ",""),"sender_name":to.get("name",""),"sender_email":to.get("address",""),"oetp_ids":list(set(re.findall(r"OETP-\d{4}-\d{4,8}",question,re.I))),"top_k":5,"max_context_chunks":3})
+                r = await c.post(f"{CC_URL}/draft/generate", json={"email_text":question[:3000],"email_subject":subject.replace("RE: ",""),"sender_name":to.get("name",""),"sender_email":to.get("address",""),"app_ids":list(set(re.findall(r"OETP-\d{4}-\d{4,8}",question,re.I))),"top_k":5,"max_context_chunks":3})
                 hr = r.json() if r.status_code==200 else {}
             dur = time.time()-t0
         except Exception as e: print(f"ERROR ({e})"); errors+=1; continue
@@ -98,7 +98,7 @@ async def run(limit=100, days=30):
         st = compute_style_score(ht, colleague, to.get("name",""))
         status = "MATCH" if sim>=0.5 else "PARTIAL" if sim>=0.25 else "MISMATCH"
         print(f"{status} (sem={ss:.2f} style={st['overall']:.2f} {dur:.1f}s)")
-        results.append({"subject":subject[:80],"question":question[:300],"colleague_response":colleague[:500],"hanna_response":ht[:500],"similarity":round(sim,3),"semantic_sim":round(ss,3),"text_sim":round(ts,3),"style_score":st["overall"],"style_components":st["components"],"confidence":hr.get("confidence","?"),"status":status,"llm_provider":hr.get("llm_provider","?"),"duration_s":round(dur,1)})
+        results.append({"subject":subject[:80],"question":question[:300],"colleague_response":colleague[:500],"cc_response":ht[:500],"similarity":round(sim,3),"semantic_sim":round(ss,3),"text_sim":round(ts,3),"style_score":st["overall"],"style_components":st["components"],"confidence":hr.get("confidence","?"),"status":status,"llm_provider":hr.get("llm_provider","?"),"duration_s":round(dur,1)})
         await asyncio.sleep(0.3)
 
     if not results: print("No results."); return

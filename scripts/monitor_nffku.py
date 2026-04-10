@@ -4,7 +4,7 @@
 Scrapes the OETP page, compares with last snapshot, and if changed:
 1. Saves new snapshot
 2. Shows diff
-3. Optionally triggers re-ingest into Hanna
+3. Optionally triggers re-ingest into CustomerCare
 
 Usage:
     python3 monitor_nffku.py              # Check for changes
@@ -25,10 +25,10 @@ import requests
 from bs4 import BeautifulSoup
 
 URL = "https://nffku.hu/index.php/tile-detail/otthonienergiatarolo"
-SNAPSHOT_DIR = Path(os.path.expanduser("~/.openclaw/hanna/data/nffku_snapshots"))
+SNAPSHOT_DIR = Path(os.path.expanduser("~/.openclaw/customercare/data/nffku_snapshots"))
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_FILE = SNAPSHOT_DIR / "latest.json"
-HANNA_API = "http://localhost:8101"
+CC_API = "http://localhost:8101"
 
 
 def scrape_page() -> dict:
@@ -124,7 +124,7 @@ def diff_snapshots(old: dict, new: dict) -> dict:
 
 
 def trigger_ingest():
-    """Trigger Hanna scraper+ingest via Docker container."""
+    """Trigger scraper+ingest via Docker container."""
     import subprocess
 
     try:

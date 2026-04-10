@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Golden set evaluation — compare Hanna's answers against known-good responses.
+Golden set evaluation — compare CC answers against known-good responses.
 
 Uses golden_set_eval_partials.json + any additional golden set files.
-For each question: generate Hanna draft, compare with expected answer.
+For each question: generate CC draft, compare with expected answer.
 
 Usage: python3 scripts/eval_golden_set.py
 """
@@ -23,7 +23,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-HANNA_URL = "http://localhost:8000"
+CC_URL = "http://localhost:8000"
 DATA_DIR = Path(__file__).parent.parent / "data"
 OBSIDIAN_REPORTS = Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/PARA/!inbox/!reports"
 
@@ -77,7 +77,7 @@ async def generate_draft(question: str, subject: str = "") -> dict:
         "max_context_chunks": 3,
     }
     async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(f"{HANNA_URL}/draft/generate", json=payload)
+        resp = await client.post(f"{CC_URL}/draft/generate", json=payload)
         if resp.status_code == 200:
             return resp.json()
         return {"error": f"HTTP {resp.status_code}", "body_html": ""}
@@ -105,22 +105,22 @@ async def run_golden_eval():
         print(f"[{i+1}/{len(entries)}] {subject[:50]}...", end=" ", flush=True)
 
         t0 = time.time()
-        hanna_result = await generate_draft(question, subject)
+        cc_result = await generate_draft(question, subject)
         duration = time.time() - t0
 
-        if hanna_result.get("skip"):
-            print(f"SKIP ({hanna_result.get('skip_reason', '')})")
+        if cc_result.get("skip"):
+            print(f"SKIP ({cc_result.get('skip_reason', '')})")
             results.append({"subject": subject, "status": "SKIP", "semantic_sim": 0})
             continue
 
-        hanna_text = _html_to_text(hanna_result.get("body_html", ""))
-        sem_sim = await _semantic_sim(hanna_text, expected)
-        txt_sim = _text_sim(hanna_text, expected)
+        cc_text = _html_to_text(cc_result.get("body_html", ""))
+        sem_sim = await _semantic_sim(cc_text, expected)
+        txt_sim = _text_sim(cc_text, expected)
         combined = sem_sim * 0.7 + txt_sim * 0.3
 
         # Style score
         from app.reasoning.style_score import compute_style_score
-        style = compute_style_score(hanna_text, expected)
+        style = compute_style_score(cc_text, expected)
 
         status = "PASS" if combined >= 0.5 else "PARTIAL" if combined >= 0.3 else "FAIL"
         print(f"{status} (sem={sem_sim:.2f}, style={style['overall']:.2f}, {duration:.1f}s)")
@@ -128,23 +128,23 @@ async def run_golden_eval():
         # Check for section references
         import re
         expected_sections = set(re.findall(r'(\d+\.\d+\.?\s*pont)', expected))
-        hanna_sections = set(re.findall(r'(\d+\.\d+\.?\s*pont)', hanna_text))
-        section_match = bool(expected_sections & hanna_sections) if expected_sections else True
+        cc_sections = set(re.findall(r'(\d+\.\d+\.?\s*pont)', cc_text))
+        section_match = bool(expected_sections & cc_sections) if expected_sections else True
 
         results.append({
             "subject": subject[:80],
             "question": question[:200],
             "expected": expected[:300],
-            "hanna": hanna_text[:300],
+            "customercare": cc_text[:300],
             "semantic_sim": round(sem_sim, 3),
             "text_sim": round(txt_sim, 3),
             "combined": round(combined, 3),
             "style_score": style["overall"],
             "status": status,
-            "confidence": hanna_result.get("confidence", "?"),
+            "confidence": cc_result.get("confidence", "?"),
             "section_match": section_match,
             "expected_sections": list(expected_sections),
-            "hanna_sections": list(hanna_sections),
+            "cc_sections": list(cc_sections),
             "duration_s": round(duration, 1),
         })
 
@@ -177,7 +177,7 @@ async def run_golden_eval():
             for f in fails:
                 print(f"  {f['subject'][:50]} (sem={f['semantic_sim']:.2f})")
                 print(f"    Expected: {f['expected'][:100]}...")
-                print(f"    Hanna: {f['hanna'][:100]}...")
+                print(f"    CC: {f['cc'][:100]}...")
 
     # Save
     report = {

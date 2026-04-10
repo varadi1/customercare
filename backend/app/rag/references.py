@@ -199,7 +199,7 @@ def resolve_reference(ref: Reference, max_results: int = 2) -> list[dict]:
     
     where = where_clauses[0] if len(where_clauses) == 1 else {"$and": where_clauses}
     
-    print(f"[hanna] Resolving ref: {ref.ref_type}:{ref.section} query='{search_query}'")
+    print(f"[cc] Resolving ref: {ref.ref_type}:{ref.section} query='{search_query}'")
     
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -250,7 +250,7 @@ def resolve_reference(ref: Reference, max_results: int = 2) -> list[dict]:
             break
     
     if not matched:
-        print(f"[hanna] Ref not resolved: {ref.ref_type}:{ref.section} (no matching source)")
+        print(f"[cc] Ref not resolved: {ref.ref_type}:{ref.section} (no matching source)")
     
     return matched
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Offline evaluation pipeline — test Hanna against real sent emails.
+"""Offline evaluation pipeline — test CustomerCare against real sent emails.
 
 Fetches sent emails, extracts the original question (from quoted thread),
-sends it to Hanna's /draft/generate, and compares the draft to the actual answer.
+sends it to CC /draft/generate, and compares the draft to the actual answer.
 
 Usage (inside cc-backend container):
     python3 /app/scripts/eval_pipeline.py --limit 250 [--dry-run] [--output /app/data/eval_results.json]
@@ -30,7 +30,7 @@ from bs4 import BeautifulSoup
 sys.path.insert(0, "/app")
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-HANNA_URL = "http://localhost:8000"
+CC_URL = "http://localhost:8000"
 
 # ── Email parsing ──
 
@@ -195,10 +195,10 @@ async def fetch_sent_emails(mailbox: str, max_items: int = 250) -> list[dict]:
     return all_messages[:max_items]
 
 
-# ── Hanna eval ──
+# ── CustomerCare eval ──
 
-async def generate_hanna_draft(question: str, subject: str, sender: str = "Teszt Pályázó") -> dict:
-    """Call Hanna /draft/generate with the extracted question."""
+async def generate_cc_draft(question: str, subject: str, sender: str = "Teszt Pályázó") -> dict:
+    """Call CC /draft/generate with the extracted question."""
     async with httpx.AsyncClient(timeout=120) as client:
         payload = {
             "email_text": question[:3000],
@@ -208,7 +208,7 @@ async def generate_hanna_draft(question: str, subject: str, sender: str = "Teszt
             "top_k": 5,
         }
         try:
-            resp = await client.post(f"{HANNA_URL}/draft/generate", json=payload)
+            resp = await client.post(f"{CC_URL}/draft/generate", json=payload)
             if resp.status_code == 200:
                 return resp.json()
             else:
@@ -228,7 +228,7 @@ def compute_similarity(text_a: str, text_b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-def extract_oetp_ids(text: str) -> set[str]:
+def extract_app_ids(text: str) -> set[str]:
     """Extract OETP-2026-XXXXXX identifiers."""
     return set(re.findall(r"OETP-\d{4}-\d+", text))
 
@@ -265,8 +265,8 @@ class EvalResult:
     answer_len: int
     draft_len: int
     similarity: float  # difflib ratio
-    confidence: str  # Hanna confidence
-    oetp_ids_match: bool  # Did Hanna mention the same OETP IDs?
+    confidence: str  # CC confidence
+    app_ids_match: bool  # Did CC mention the same OETP IDs?
     key_terms_overlap: float  # Jaccard of domain terms
     question_preview: str
     answer_preview: str
@@ -345,9 +345,9 @@ async def run_eval(
                 print(f"       A: {actual_answer[:120]}...")
             continue
 
-        # Generate Hanna draft
+        # Generate CC draft
         print(f"  [{i+1}/{len(sent_emails)}] {subject[:50]}...", end=" ", flush=True)
-        draft_result = await generate_hanna_draft(question, subject)
+        draft_result = await generate_cc_draft(question, subject)
 
         if "error" in draft_result:
             stats["errors"] += 1
@@ -355,7 +355,7 @@ async def run_eval(
                 msg_id=msg_id, subject=subject, sent_date=sent_date,
                 question_len=len(question), answer_len=len(actual_answer),
                 draft_len=0, similarity=0, confidence="error",
-                oetp_ids_match=False, key_terms_overlap=0,
+                app_ids_match=False, key_terms_overlap=0,
                 question_preview=question[:200],
                 answer_preview=actual_answer[:200],
                 draft_preview="",
@@ -381,9 +381,9 @@ async def run_eval(
         # Compare
         sim = compute_similarity(actual_answer, draft_text)
 
-        answer_oetp = extract_oetp_ids(actual_answer)
-        draft_oetp = extract_oetp_ids(draft_text)
-        oetp_match = bool(answer_oetp & draft_oetp) if answer_oetp else True
+        answer_ids = extract_app_ids(actual_answer)
+        draft_ids = extract_app_ids(draft_text)
+        app_match = bool(answer_ids & draft_ids) if answer_ids else True
 
         answer_terms = extract_key_terms(actual_answer)
         draft_terms = extract_key_terms(draft_text)
@@ -401,7 +401,7 @@ async def run_eval(
             question_len=len(question), answer_len=len(actual_answer),
             draft_len=len(draft_text), similarity=round(sim, 3),
             confidence=str(confidence),
-            oetp_ids_match=oetp_match,
+            app_ids_match=app_match,
             key_terms_overlap=round(key_overlap, 3),
             question_preview=question[:300],
             answer_preview=actual_answer[:300],
@@ -465,10 +465,10 @@ async def run_eval(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hanna offline eval pipeline")
+    parser = argparse.ArgumentParser(description="CustomerCare offline eval pipeline")
     parser.add_argument("--limit", type=int, default=250, help="Max emails to fetch")
     parser.add_argument("--mailbox", default="lakossagitarolo@neuzrt.hu")
-    parser.add_argument("--dry-run", action="store_true", help="Only fetch+parse, don't call Hanna")
+    parser.add_argument("--dry-run", action="store_true", help="Only fetch+parse, don't call CC API")
     parser.add_argument("--output", default="/app/data/eval_results.json")
     args = parser.parse_args()
 

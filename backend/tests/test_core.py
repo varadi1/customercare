@@ -35,7 +35,7 @@ class TestPersonTracker:
 
     def test_process_email_entities(self, db_conn):
         from app.reasoning.person_tracker import process_email_entities
-        result = run(process_email_entities(conn=db_conn, sender_name="Eval User", sender_email="eval@solarpro.hu", oetp_ids=["OETP-2026-TEST01"], email_subject="Teszt"))
+        result = run(process_email_entities(conn=db_conn, sender_name="Eval User", sender_email="eval@solarpro.hu", app_ids=["OETP-2026-TEST01"], email_subject="Teszt"))
         assert result["person_id"] is not None
         assert result["org_id"] is not None
         assert len(result["application_ids"]) == 1

@@ -1,11 +1,11 @@
 #!/bin/bash
-# Hanna OETP - Document Ingestion Script
+# CustomerCare OETP - Document Ingestion Script
 # Ingests all OETP pályázati dokumentumok with proper metadata
 
 API="http://localhost:8101"
-DOCS="/Users/varadiimre/.openclaw/hanna/documents"
+DOCS="/Users/varadiimre/.openclaw/customercare/documents"
 
-echo "=== Hanna OETP Document Ingestion ==="
+echo "=== CustomerCare OETP Document Ingestion ==="
 echo ""
 
 # 1. Pályázati felhívás (módosított, egységes szerkezetben)

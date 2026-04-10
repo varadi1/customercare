@@ -1,8 +1,8 @@
-# Promptfoo red-teaming config for Hanna OETP
+# Promptfoo red-teaming config for CustomerCare
 # Usage: cd backend/tests/promptfoo && npx promptfoo eval
 # Docs: https://promptfoo.dev
 
-description: "Hanna OETP draft quality + adversarial tests"
+description: "CustomerCare draft quality + adversarial tests"
 
 providers:
   - id: http

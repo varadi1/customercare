@@ -114,7 +114,7 @@ async def _semantic_search_impl(
     try:
         rows = await pool.fetch(sql, *params)
     except Exception as e:
-        print(f"[hanna-oetp] Semantic search failed: {e}")
+        print(f"[cc] Semantic search failed: {e}")
         return []
     
     results = []
@@ -221,7 +221,7 @@ async def _bm25_search_pg(
     try:
         rows = await pool.fetch(sql, *params)
     except Exception as e:
-        print(f"[hanna-oetp] BM25 search failed: {e}")
+        print(f"[cc] BM25 search failed: {e}")
         return []
     
     results = []
@@ -365,7 +365,7 @@ async def search_async(
         hyde_coro,
         expand_query_async(query),
     )
-    print(f"[hanna-oetp] Query expansion: {queries}, HyDE: {'yes' if hyde_embedding else 'no'}")
+    print(f"[cc] Query expansion: {queries}, HyDE: {'yes' if hyde_embedding else 'no'}")
 
     # Stage 1+2: Search for each expanded query
     all_semantic = []
@@ -402,7 +402,7 @@ async def search_async(
             )
             all_bm25.extend(bm25_results)
         except Exception as e:
-            print(f"[hanna-oetp] BM25 search failed for '{q}': {e}")
+            print(f"[cc] BM25 search failed for '{q}': {e}")
 
     # Stage 2.5: Knowledge Graph search (entity-based expansion)
     kg_results = []
@@ -410,7 +410,7 @@ async def search_async(
         from .kg_search import kg_search
         kg_results = await kg_search(query, top_k=retrieval_k, only_valid=only_valid)
     except Exception as e:
-        print(f"[hanna-oetp] KG search failed: {e}")
+        print(f"[cc] KG search failed: {e}")
 
     # Stage 2.7: Targeted priority source retrieval
     # Problem: With ~9000 email chunks vs ~550 official chunks, emails dominate
@@ -473,7 +473,7 @@ async def search_async(
 
             return weighted[:final_k]
         except Exception as e:
-            print(f"[hanna-oetp] Rerank failed: {e}")
+            print(f"[cc] Rerank failed: {e}")
             weighted = apply_authority_weighting(candidates[:rerank_k])
             return weighted[:final_k]
 
@@ -638,7 +638,7 @@ def _inject_priority_chunks(candidates: list[dict], all_fused: list[dict]) -> li
 
     if injected > 0:
         types_injected = list(missing_type_best.keys())
-        print(f"[hanna-oetp] Injected {injected} priority chunks ({types_injected}) into reranker candidates")
+        print(f"[cc] Injected {injected} priority chunks ({types_injected}) into reranker candidates")
 
     return candidates
 
@@ -707,7 +707,7 @@ async def find_chunks_by_text(search_text: str, limit: int = 50) -> list[dict]:
         
         return matches
     except Exception as e:
-        print(f"[hanna-oetp] Text search failed: {e}")
+        print(f"[cc] Text search failed: {e}")
         return []
 
 

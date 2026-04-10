@@ -1,4 +1,4 @@
-"""HyDE (Hypothetical Document Embeddings) for Hanna OETP.
+"""HyDE (Hypothetical Document Embeddings) for CustomerCare.
 
 Generates a hypothetical formal OETP program document passage from a user query,
 then embeds THAT text for semantic search.
@@ -54,10 +54,10 @@ async def generate_hypothetical_document_async(query: str) -> str | None:
                 return None
             return hypo_doc
     except httpx.TimeoutException:
-        print(f"[hanna-oetp] HyDE generation timed out ({settings.hyde_timeout}s)")
+        print(f"[cc] HyDE generation timed out ({settings.hyde_timeout}s)")
         return None
     except Exception as e:
-        print(f"[hanna-oetp] HyDE generation failed: {type(e).__name__}: {e}")
+        print(f"[cc] HyDE generation failed: {type(e).__name__}: {e}")
         return None
 
 
@@ -74,5 +74,5 @@ async def hyde_embed_query_async(query: str) -> list[float] | None:
         return None
 
     embedding = embed_query(hypo_doc)
-    print(f"[hanna-oetp] HyDE: {len(hypo_doc)} chars, {time.time()-t0:.2f}s")
+    print(f"[cc] HyDE: {len(hypo_doc)} chars, {time.time()-t0:.2f}s")
     return embedding

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Obsidian vault daily sync for Hanna RAG
+# Obsidian vault daily sync for CustomerCare RAG
 # Called by launchd (com.openclaw.obsidian-daily-sync)
 # Ensures Docker + container are running before triggering ingest
 
@@ -36,7 +36,7 @@ fi
 STATUS=$(/usr/local/bin/docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)
 if [ "$STATUS" != "running" ]; then
     log "WARNING: Container $CONTAINER is '$STATUS'. Starting it..."
-    cd /Users/varadiimre/.openclaw/hanna && /usr/local/bin/docker compose up -d backend
+    cd /Users/varadiimre/DEV/customercare && /usr/local/bin/docker compose up -d backend
     sleep 15  # wait for startup
     STATUS=$(/usr/local/bin/docker inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null)
     if [ "$STATUS" != "running" ]; then

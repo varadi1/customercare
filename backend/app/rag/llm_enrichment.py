@@ -1,4 +1,4 @@
-"""LLM-based contextual enrichment for Hanna RAG chunks.
+"""LLM-based contextual enrichment for CustomerCare RAG chunks.
 
 Uses GPT-4o-mini to generate context prefixes per chunk, then re-embeds
 with BGE-M3 for better retrieval quality.

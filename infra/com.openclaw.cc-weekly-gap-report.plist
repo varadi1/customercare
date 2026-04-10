@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.hanna.weekly-gap-report</string>
+    <string>com.openclaw.cc-weekly-gap-report</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/varadiimre/.claude/scripts/hanna_weekly_gap.sh</string>
+        <string>/Users/varadiimre/DEV/customercare/scripts/weekly_gap_report.sh</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -19,8 +19,8 @@
         <integer>0</integer>
     </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/hanna-gap-report.log</string>
+    <string>/tmp/cc-gap-report.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/hanna-gap-report.log</string>
+    <string>/tmp/cc-gap-report.log</string>
 </dict>
 </plist>

@@ -8,7 +8,7 @@ v4 — 2026-02-27 fixes:
   - Body match threshold raised to 0.5 (was 0.15)
   - Pending status for <24h drafts without conv match
   - Reliable vs uncertain match separation in stats
-  - HTML-level Hanna banner strip (before html→text)
+  - HTML-level CC banner strip (before html→text)
   - Hungarian Outlook Web quote pattern added
 """
 
@@ -35,25 +35,25 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 # ─── Text Processing ─────────────────────────────────────────────────────────
 
 
-def _strip_hanna_banner_html(html: str) -> str:
-    """Remove Hanna AI Draft banner at HTML level BEFORE text extraction.
-    
+def _strip_draft_banner_html(html: str) -> str:
+    """Remove CC/Hanna AI Draft banner at HTML level BEFORE text extraction.
+
     The banner is a <div style="background:#f0f0f0; border-left:3px solid #999">
-    block at the top of the draft.
+    block at the top of the draft.  Detects both old "Hanna" and new "CC" banners.
     """
     if not html:
         return html
     soup = BeautifulSoup(html, "html.parser")
 
-    # Strategy 1: find div with background:#f0f0f0 style (Hanna banner)
+    # Strategy 1: find div with background:#f0f0f0 style (draft banner)
     for div in soup.find_all("div"):
         style = (div.get("style") or "").replace(" ", "").lower()
         if "background:#f0f0f0" in style or "background-color:#f0f0f0" in style:
             div.decompose()
             break
 
-    # Strategy 2: find any element containing "Hanna AI Draft" or "🤖 Hanna"
-    for el in soup.find_all(string=re.compile(r"(Hanna AI Draft|🤖\s*Hanna)", re.IGNORECASE)):
+    # Strategy 2: find any element containing draft banner text (old "Hanna" or new "CC")
+    for el in soup.find_all(string=re.compile(r"(Hanna AI Draft|CC AI Draft|🤖\s*Hanna|🤖\s*CC)", re.IGNORECASE)):
         parent = el.find_parent("div") or el.find_parent("p") or el.find_parent("td")
         if parent:
             parent.decompose()
@@ -296,9 +296,9 @@ async def check_feedback(mailbox: str, hours: int = 48) -> dict:
         conv_id = draft.get("conversation_id", "")
         draft_subj = _norm_subject(draft.get("subject", ""))
 
-        # Clean draft text: strip Hanna banner at HTML level, then extract text
+        # Clean draft text: strip CC banner at HTML level, then extract text
         draft_html = draft.get("draft_html", "")
-        clean_html = _strip_hanna_banner_html(draft_html)
+        clean_html = _strip_draft_banner_html(draft_html)
         draft_text = _html_to_text(clean_html)
 
         # Determine draft age

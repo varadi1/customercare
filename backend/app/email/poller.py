@@ -18,16 +18,16 @@ from .auth import get_auth_headers
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 STATE_PATH = Path("/app/data/poll_state.json")
 
-# Regex patterns for auto-extracting identifiers
-_OETP_RE = re.compile(r"OETP-\d{4}-\d{4,8}", re.IGNORECASE)
+# Regex pattern for POD numbers (hardcoded — not program-specific)
 _POD_RE = re.compile(r"HU-[A-Z]{2,10}-\d[\w-]{5,30}", re.IGNORECASE)
 
 
 def _extract_identifiers(text: str) -> tuple[list[str], list[str]]:
-    """Extract OETP IDs and POD numbers from email text."""
-    oetp_ids = list(set(_OETP_RE.findall(text)))
+    """Extract application IDs (from program.yaml pattern) and POD numbers."""
+    from ..reasoning.radix_client import extract_app_ids
+    app_ids = extract_app_ids(text)
     pod_numbers = list(set(_POD_RE.findall(text)))
-    return oetp_ids, pod_numbers
+    return app_ids, pod_numbers
 
 
 def _load_state() -> dict:
@@ -100,7 +100,7 @@ async def poll_mailbox(
 
                 # Auto-extract identifiers from subject + body
                 combined_text = f"{msg.get('subject', '')} {body_text}"
-                oetp_ids, pod_numbers = _extract_identifiers(combined_text)
+                app_ids, pod_numbers = _extract_identifiers(combined_text)
 
                 messages.append(EmailMessage(
                     id=msg["id"],
@@ -115,7 +115,7 @@ async def poll_mailbox(
                     mailbox=mailbox,
                     has_attachments=msg.get("hasAttachments", False),
                     importance=msg.get("importance", "normal"),
-                    oetp_ids=oetp_ids,
+                    app_ids=app_ids,
                     pod_numbers=pod_numbers,
                     categories=msg.get("categories", []),
                 ))
@@ -158,7 +158,7 @@ async def _register_email_entities(messages: list[EmailMessage]) -> None:
                 conn=conn,
                 sender_name=msg.sender,
                 sender_email=msg.sender_email,
-                oetp_ids=msg.oetp_ids,
+                app_ids=msg.app_ids,
                 email_subject=msg.subject,
             )
     finally:
@@ -193,7 +193,7 @@ def _parse_messages(raw_messages: list[dict], mailbox: str) -> list[EmailMessage
         body_text = _html_to_text(body_html)
 
         combined_text = f"{msg.get('subject', '')} {body_text}"
-        oetp_ids, pod_numbers = _extract_identifiers(combined_text)
+        app_ids, pod_numbers = _extract_identifiers(combined_text)
 
         messages.append(EmailMessage(
             id=msg["id"],
@@ -207,7 +207,7 @@ def _parse_messages(raw_messages: list[dict], mailbox: str) -> list[EmailMessage
             mailbox=mailbox,
             has_attachments=msg.get("hasAttachments", False),
             importance=msg.get("importance", "normal"),
-            oetp_ids=oetp_ids,
+            app_ids=app_ids,
             pod_numbers=pod_numbers,
         ))
     return messages

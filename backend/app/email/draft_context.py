@@ -1,6 +1,6 @@
 """Draft context builder: combines RAG results + style patterns + templates.
 
-Single endpoint that gives Hanna everything she needs to write a draft
+Single endpoint that gives CC everything it needs to write a draft
 that matches colleague style and uses the right knowledge base context.
 
 v2 — 2026-03-01: Template matching + category confidence + feedback diffs
@@ -155,7 +155,7 @@ def _get_feedback_hints(category: str, max_hints: int = 3) -> list[dict]:
 async def build_draft_context(
     email_text: str,
     email_subject: str = "",
-    oetp_ids: list[str] | None = None,
+    app_ids: list[str] | None = None,
     pod_numbers: list[str] | None = None,
     top_k: int = 5,
 ) -> dict[str, Any]:
@@ -173,7 +173,7 @@ async def build_draft_context(
         - category_examples: real colleague response examples for this category
         - identifiers: extracted OETP/POD identifiers
     """
-    # 0. Skip filter — detect emails that don't need a Hanna draft
+    # 0. Skip filter — detect emails that don't need a CC draft
     skip_info = check_skip(email_text, email_subject)
     if skip_info["skip"]:
         return {
@@ -185,9 +185,9 @@ async def build_draft_context(
             "category": skip_info["skip_category"],
             "style_guide": {"available": False},
             "identifiers": {
-                "oetp_ids": oetp_ids or [],
+                "app_ids": app_ids or [],
                 "pod_numbers": pod_numbers or [],
-                "has_identifiers": bool(oetp_ids or pod_numbers),
+                "has_identifiers": bool(app_ids or pod_numbers),
             },
             "needs_legal_context": {"should_consult_reka": False, "reason": "", "suggested_query": ""},
             "use_template": None,
@@ -278,9 +278,9 @@ async def build_draft_context(
         "category": category,
         "style_guide": style_guide,
         "identifiers": {
-            "oetp_ids": oetp_ids or [],
+            "app_ids": app_ids or [],
             "pod_numbers": pod_numbers or [],
-            "has_identifiers": bool(oetp_ids or pod_numbers),
+            "has_identifiers": bool(app_ids or pod_numbers),
         },
         "needs_legal_context": needs_legal,
         # v2 fields:

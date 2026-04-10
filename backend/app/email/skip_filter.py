@@ -1,4 +1,4 @@
-"""Email skip filter: detect emails that do NOT need a Hanna draft.
+"""Email skip filter: detect emails that do NOT need a CC draft.
 
 Returns a skip_reason string (or None if the email should be processed).
 Integrated into /draft/context response so all scripts can use it.
@@ -71,7 +71,7 @@ def _is_thankyou(stripped_text: str) -> bool:
     return False
 
 
-# ─── Admin data-change requests (no Hanna needed) ───────────────────────────
+# ─── Admin data-change requests (no CC needed) ───────────────────────────
 
 # Meghatalmazott requesting email/data changes — colleague handles manually
 _ADMIN_CHANGE_PATTERNS = [
@@ -93,7 +93,7 @@ def _is_admin_data_change(subject: str, stripped_text: str) -> bool:
 
     These are typically sent by meghatalmazottak (representatives)
     requesting changes to applicant contact info. Colleagues handle
-    these manually — no Hanna draft needed.
+    these manually — no CC draft needed.
     """
     combined = (subject + " " + stripped_text).lower()
 
@@ -140,7 +140,7 @@ def check_skip(
     email_subject: str = "",
     sender_email: str = "",
 ) -> dict:
-    """Check if an email should be skipped (no Hanna draft needed).
+    """Check if an email should be skipped (no CC draft needed).
 
     Returns:
         {"skip": True/False, "reason": "...", "category": "..."}

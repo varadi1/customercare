@@ -78,7 +78,7 @@ async def chat_completion(
         for attempt in range(2):
             try:
                 t0 = time.time()
-                content = await _call_provider(
+                content, usage = await _call_provider(
                     provider, api_key, messages, temperature, max_tokens, json_mode,
                 )
                 duration_ms = int((time.time() - t0) * 1000)
@@ -88,6 +88,7 @@ async def chat_completion(
                     "provider": provider["name"],
                     "model": provider["model"],
                     "duration_ms": duration_ms,
+                    "usage": usage,
                 }
             except Exception as e:
                 logger.warning("LLM provider %s attempt %d failed: %s", provider["name"], attempt + 1, e)
@@ -148,7 +149,7 @@ async def health_check() -> dict[str, Any]:
 
         try:
             t0 = time.time()
-            content = await _call_provider(
+            content, _ = await _call_provider(
                 provider, api_key,
                 [{"role": "user", "content": "Respond with just 'ok'."}],
                 temperature=0, max_tokens=5, json_mode=False,
@@ -177,8 +178,8 @@ async def _call_provider(
     temperature: float,
     max_tokens: int,
     json_mode: bool,
-) -> str:
-    """Call a specific provider's API."""
+) -> tuple[str, dict]:
+    """Call a specific provider's API. Returns (content, usage_dict)."""
     fmt = provider["format"]
 
     async with httpx.AsyncClient(timeout=60) as client:
@@ -213,7 +214,10 @@ async def _call_openai(client, provider, api_key, messages, temperature, max_tok
         json=payload,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    data = resp.json()
+    usage = data.get("usage", {})
+    text = data["choices"][0]["message"]["content"]
+    return text, usage
 
 
 async def _call_anthropic(client, provider, api_key, messages, temperature, max_tokens, json_mode=False) -> str:
@@ -249,8 +253,9 @@ async def _call_anthropic(client, provider, api_key, messages, temperature, max_
     resp.raise_for_status()
     data = resp.json()
     text = data["content"][0]["text"]
+    usage = data.get("usage", {})
 
-    return text
+    return text, usage
 
 
 async def _call_google(client, provider, api_key, messages, temperature, max_tokens) -> str:
@@ -278,4 +283,6 @@ async def _call_google(client, provider, api_key, messages, temperature, max_tok
     resp = await client.post(url, json=payload)
     resp.raise_for_status()
     data = resp.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    usage = data.get("usageMetadata", {})
+    return text, usage

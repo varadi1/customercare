@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fine-tune BGE reranker v2-m3 on Hanna's chunk survival data.
+Fine-tune BGE reranker v2-m3 on CC chunk survival data.
 
 Usage:
   python scripts/finetune_reranker.py --train-data /app/data/reranker_train.jsonl
@@ -103,7 +103,7 @@ def finetune(
                 "positive": [item["positive"]],
                 "negative": [item["negative"]],
             }
-        evaluator = CERerankingEvaluator(eval_samples, name="hanna-eval")
+        evaluator = CERerankingEvaluator(eval_samples, name="cc-eval")
         logger.info("Evaluation samples: %d", len(eval_data))
 
     # Fine-tune
@@ -134,7 +134,7 @@ def finetune(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune BGE reranker on Hanna data")
+    parser = argparse.ArgumentParser(description="Fine-tune BGE reranker on CustomerCare data")
     parser.add_argument("--train-data", type=str, required=True, help="Training JSONL file")
     parser.add_argument("--eval-data", type=str, default="", help="Evaluation JSONL file")
     parser.add_argument("--base-model", type=str, default=BASE_MODEL)

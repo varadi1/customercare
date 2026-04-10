@@ -1,4 +1,4 @@
-"""Comprehensive tests — unit + integration for all Hanna modules.
+"""Comprehensive tests — unit + integration for all CustomerCare modules.
 Run: cd backend && python3 -m pytest tests/ -v"""
 import pytest, json, math
 from tests.conftest import run
@@ -41,15 +41,15 @@ class TestPersonTrackerExtended:
 
     def test_get_or_create_application(self, db_conn):
         from app.reasoning.person_tracker import get_or_create_application
-        aid = run(get_or_create_application(conn=db_conn, oetp_id="OETP-2026-UNITTEST"))
+        aid = run(get_or_create_application(conn=db_conn, app_id="OETP-2026-UNITTEST"))
         assert aid is not None
-        aid2 = run(get_or_create_application(conn=db_conn, oetp_id="OETP-2026-UNITTEST"))
+        aid2 = run(get_or_create_application(conn=db_conn, app_id="OETP-2026-UNITTEST"))
         assert aid == aid2  # dedup
 
     def test_link_entities_idempotent(self, db_conn):
         from app.reasoning.person_tracker import register_sender, get_or_create_application, link_entities
         pid = run(register_sender(conn=db_conn, sender_name="Link Test", sender_email="link.test@example.com"))
-        aid = run(get_or_create_application(conn=db_conn, oetp_id="OETP-2026-LINK"))
+        aid = run(get_or_create_application(conn=db_conn, app_id="OETP-2026-LINK"))
         run(link_entities(conn=db_conn, source_id=pid, target_id=aid, relation_type="ASKED_ABOUT"))
         run(link_entities(conn=db_conn, source_id=pid, target_id=aid, relation_type="ASKED_ABOUT"))
         cnt = run(db_conn.fetchval("SELECT COUNT(*) FROM kg_relations WHERE source_id=$1 AND target_id=$2", pid, aid))
@@ -57,14 +57,14 @@ class TestPersonTrackerExtended:
 
     def test_gmail_skips_org(self, db_conn):
         from app.reasoning.person_tracker import process_email_entities
-        result = run(process_email_entities(conn=db_conn, sender_name="Gmail User", sender_email="test@gmail.com", oetp_ids=[]))
+        result = run(process_email_entities(conn=db_conn, sender_name="Gmail User", sender_email="test@gmail.com", app_ids=[]))
         assert result["org_id"] is None
 
-    def test_extract_oetp_ids(self):
-        from app.reasoning.person_tracker import extract_oetp_ids
-        ids = extract_oetp_ids("Pályázatom: OETP-2026-123456 és OETP-2026-789012")
+    def test_extract_app_ids(self):
+        from app.reasoning.person_tracker import extract_app_ids
+        ids = extract_app_ids("Pályázatom: OETP-2026-123456 és OETP-2026-789012")
         assert len(ids) == 2
-        assert extract_oetp_ids("Nincs ID itt") == []
+        assert extract_app_ids("Nincs ID itt") == []
 
 
 # ============================================================
@@ -163,7 +163,7 @@ class TestStyleScoreExtended:
     def test_brevity_short_question(self):
         from app.reasoning.style_score import _score_brevity
         assert _score_brevity("Rövid válasz.", "OK.") == 1.0  # both short
-        assert _score_brevity("x" * 500, "OK.") <= 0.5  # hanna too long
+        assert _score_brevity("x" * 500, "OK.") <= 0.5  # draft too long
 
 
 # ============================================================

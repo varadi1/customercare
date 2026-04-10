@@ -1,5 +1,5 @@
 """
-Reference checker — validates section references in Hanna's answers.
+Reference checker — validates section references in CC answers.
 
 Checks that point/section references (e.g., "3.3. pont", "4.1. pont")
 actually exist in the source chunks used for the answer.

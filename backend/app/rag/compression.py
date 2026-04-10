@@ -84,7 +84,7 @@ def compress_results(
 
     if removed_scores:
         print(
-            f"[hanna-oetp] Compression: {len(removed_scores)} chunks removed "
+            f"[cc] Compression: {len(removed_scores)} chunks removed "
             f"(scores: {removed_scores[:5]}), {len(compressed)} kept"
         )
 

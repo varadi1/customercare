@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Live email evaluation — test Hanna against real colleague answers.
+"""Live email evaluation — test CustomerCare against real colleague answers.
 
 Fetches sent emails from Outlook, extracts question/answer pairs,
-generates Hanna drafts for each question, and compares against
+generates CC drafts for each question, and compares against
 the actual colleague answer using semantic + text + style metrics.
 
 This is the production counterpart to eval_golden_set.py:
@@ -39,7 +39,7 @@ from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-HANNA_URL = "http://localhost:8000"
+CC_URL = "http://localhost:8000"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 DATA_DIR = Path(__file__).parent.parent / "data"
 OBSIDIAN_REPORTS = Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/PARA/!inbox/!reports"
@@ -99,7 +99,7 @@ def _is_internal(email: str) -> bool:
     return (email or "").lower().split("@")[-1] in INTERNAL_DOMAINS
 
 
-def _extract_oetp_ids(text: str) -> set[str]:
+def _extract_app_ids(text: str) -> set[str]:
     return set(re.findall(r"OETP-\d{4}-\d{4,8}", text, re.IGNORECASE))
 
 
@@ -239,18 +239,18 @@ async def fetch_sent_emails(mailbox: str, max_items: int = 250) -> list[dict]:
     return all_messages[:max_items]
 
 
-# ── Hanna draft ──
+# ── CC draft ──
 
 async def generate_draft(question: str, subject: str, sender_name: str = "", sender_email: str = "") -> dict:
-    """Call Hanna /draft/generate."""
-    oetp_ids = list(_extract_oetp_ids(question))
+    """Call CC /draft/generate."""
+    app_ids = list(_extract_app_ids(question))
     async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(f"{HANNA_URL}/draft/generate", json={
+        resp = await client.post(f"{CC_URL}/draft/generate", json={
             "email_text": question[:3000],
             "email_subject": re.sub(r"^(RE|FW|Fwd|Vá|VS|AW|SV)\s*:\s*", "", subject, flags=re.IGNORECASE).strip(),
             "sender_name": sender_name,
             "sender_email": sender_email,
-            "oetp_ids": oetp_ids,
+            "app_ids": app_ids,
             "top_k": 5,
             "max_context_chunks": 3,
         })
@@ -274,7 +274,7 @@ class EvalResult:
     style_score: float = 0.0
     key_term_overlap: float = 0.0
     section_match: bool = True
-    oetp_ids_match: bool = True
+    app_ids_match: bool = True
     # Metadata
     confidence: str = ""
     llm_provider: str = ""
@@ -351,7 +351,7 @@ async def run_eval(
             ))
             continue
 
-        # Generate Hanna draft
+        # Generate CC draft
         n = len([r for r in results if r.status not in ("DRY_RUN",)]) + 1
         print(f"  [{n}] {subject[:50]}...", end=" ", flush=True)
 
@@ -400,9 +400,9 @@ async def run_eval(
         section_match = bool(answer_sections & draft_sections) if answer_sections else True
 
         # OETP ID match
-        answer_oetp = _extract_oetp_ids(actual_answer)
-        draft_oetp = _extract_oetp_ids(draft_text)
-        oetp_match = bool(answer_oetp & draft_oetp) if answer_oetp else True
+        answer_ids = _extract_app_ids(actual_answer)
+        draft_ids = _extract_app_ids(draft_text)
+        app_match = bool(answer_ids & draft_ids) if answer_ids else True
 
         # Status
         status = "MATCH" if combined >= 0.5 else "PARTIAL" if combined >= 0.25 else "MISMATCH"
@@ -423,7 +423,7 @@ async def run_eval(
             style_score=style["overall"],
             key_term_overlap=round(term_overlap, 3),
             section_match=section_match,
-            oetp_ids_match=oetp_match,
+            app_ids_match=app_match,
             confidence=str(draft_result.get("confidence", "?")),
             llm_provider=str(draft_result.get("llm_provider", "?")),
             duration_s=round(duration, 1),
@@ -483,7 +483,7 @@ def _compute_stats(results: list[EvalResult], tested: list[EvalResult], skips: C
         stats["avg_style"] = round(sum(r.style_score for r in tested) / len(tested), 3)
         stats["avg_term_overlap"] = round(sum(r.key_term_overlap for r in tested) / len(tested), 3)
         stats["section_match_rate"] = round(sum(1 for r in tested if r.section_match) / len(tested), 3)
-        stats["oetp_id_match_rate"] = round(sum(1 for r in tested if r.oetp_ids_match) / len(tested), 3)
+        stats["app_id_match_rate"] = round(sum(1 for r in tested if r.app_ids_match) / len(tested), 3)
         stats["confidence_dist"] = dict(Counter(r.confidence for r in tested))
         # Style components avg
         components = {}
@@ -516,7 +516,7 @@ def _print_summary(stats: dict, dry_run: bool):
         print(f"  Átlag style:        {stats['avg_style']:.3f}")
         print(f"  Átlag term overlap: {stats['avg_term_overlap']:.3f}")
         print(f"  Section ref match:  {stats['section_match_rate']:.0%}")
-        print(f"  OETP ID match:      {stats['oetp_id_match_rate']:.0%}")
+        print(f"  OETP ID match:      {stats['app_id_match_rate']:.0%}")
         print(f"  Confidence:         {stats['confidence_dist']}")
         print(f"\n  Style komponensek:")
         for k, v in stats.get("style_components", {}).items():
@@ -527,12 +527,12 @@ def _write_obsidian_report(stats: dict, results: list[EvalResult], tested: list[
     """Write evaluation report to Obsidian vault."""
     now = datetime.now()
     date_str = now.strftime("%y%m%d")
-    filename = f"{date_str}-hanna-live-eval.md"
+    filename = f"{date_str}-cc-live-eval.md"
     filepath = OBSIDIAN_REPORTS / filename
 
     mismatches = [r for r in tested if r.status == "MISMATCH"][:5]
 
-    md = f"""# Hanna Live Eval — {now.strftime('%Y-%m-%d %H:%M')}
+    md = f"""# CustomerCare Live Eval — {now.strftime('%Y-%m-%d %H:%M')}
 
 ## Összefoglaló
 
@@ -547,7 +547,7 @@ def _write_obsidian_report(stats: dict, results: list[EvalResult], tested: list[
 | Style score (átlag) | {stats['avg_style']:.3f} |
 | Term overlap (átlag) | {stats['avg_term_overlap']:.3f} |
 | Section ref match | {stats['section_match_rate']:.0%} |
-| OETP ID match | {stats['oetp_id_match_rate']:.0%} |
+| OETP ID match | {stats['app_id_match_rate']:.0%} |
 | Confidence | {stats['confidence_dist']} |
 
 ## Style komponensek
@@ -566,7 +566,7 @@ def _write_obsidian_report(stats: dict, results: list[EvalResult], tested: list[
             md += f"- Confidence: {r.confidence}\n"
             md += f"- **Kérdés**: {r.question_preview[:200]}...\n"
             md += f"- **Kolléga**: {r.answer_preview[:200]}...\n"
-            md += f"- **Hanna**: {r.draft_preview[:200]}...\n\n"
+            md += f"- **CC**: {r.draft_preview[:200]}...\n\n"
 
     try:
         OBSIDIAN_REPORTS.mkdir(parents=True, exist_ok=True)
@@ -579,10 +579,10 @@ def _write_obsidian_report(stats: dict, results: list[EvalResult], tested: list[
 # ── CLI ──
 
 def main():
-    parser = argparse.ArgumentParser(description="Hanna live email evaluation")
+    parser = argparse.ArgumentParser(description="CustomerCare live email evaluation")
     parser.add_argument("--limit", type=int, default=50, help="Max emails to fetch (default 50)")
     parser.add_argument("--mailbox", default="lakossagitarolo@neuzrt.hu")
-    parser.add_argument("--dry-run", action="store_true", help="Only parse, don't call Hanna")
+    parser.add_argument("--dry-run", action="store_true", help="Only parse, don't call CC API")
     parser.add_argument("--report", action="store_true", help="Generate Obsidian report")
     args = parser.parse_args()
 

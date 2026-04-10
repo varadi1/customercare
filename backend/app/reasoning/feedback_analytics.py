@@ -1,7 +1,7 @@
 """
 Feedback analytics — extract lessons from draft-vs-sent differences.
 
-Level 1 of Hanna's learning system:
+Level 1 of CC's learning system:
   1. categorize_changes() — LLM classifies WHAT the colleague changed
   2. compute_chunk_survival() — which RAG chunks survived into the sent email
   3. export_pair_to_langfuse() — dataset building for DSPy optimization
@@ -120,7 +120,7 @@ async def compute_chunk_survival(
     A chunk 'survived' if its overlap with sent_text is >= 50% of its overlap with draft_text.
 
     Args:
-        draft_text: Hanna's generated draft (plain text)
+        draft_text: CC generated draft (plain text)
         sent_text: Actually sent email (plain text)
         top_chunks: List of chunk dicts with at least 'id' and 'chunk_type'.
                     If 'text' key exists, uses it. Otherwise queries DB.
@@ -190,7 +190,7 @@ async def export_pair_to_langfuse(
     draft_text: str,
     sent_text: str,
     metadata: dict,
-    dataset_name: str = "hanna-draft-pairs",
+    dataset_name: str = "cc-draft-pairs",
 ) -> bool:
     """Export a draft-sent pair to Langfuse dataset for DSPy training.
 

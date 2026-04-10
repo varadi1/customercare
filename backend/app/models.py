@@ -1,4 +1,4 @@
-"""Pydantic models for Hanna API."""
+"""Pydantic models for CustomerCare API."""
 
 from datetime import datetime
 from typing import Optional
@@ -92,9 +92,9 @@ class EmailMessage(BaseModel):
     has_attachments: bool = False
     importance: str = "normal"
     # Auto-extracted identifiers
-    oetp_ids: list[str] = Field(default_factory=list)  # e.g. ["OETP-2026-123456"]
+    app_ids: list[str] = Field(default_factory=list)  # e.g. ["OETP-2026-123456", "MR-TAVHO-001"]
     pod_numbers: list[str] = Field(default_factory=list)  # e.g. ["HU-ELMU-xxx"]
-    # Outlook categories (for dedup: skip if Hanna already processed)
+    # Outlook categories (for dedup: skip if CC already processed)
     categories: list[str] = Field(default_factory=list)
 
 

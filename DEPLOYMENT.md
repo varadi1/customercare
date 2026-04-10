@@ -1,4 +1,4 @@
-# Hanna — Telepítési Útmutató
+# CustomerCare — Telepítési Útmutató
 
 ## Követelmények
 
@@ -15,8 +15,8 @@
 
 ```bash
 # 1. Klónozás
-git clone https://github.com/varadi1/hanna.git ~/DEV/hanna
-cd ~/DEV/hanna
+git clone https://github.com/varadi1/customercare.git ~/DEV/customercare
+cd ~/DEV/customercare
 
 # 2. .env kitöltése
 cp .env.example .env
@@ -47,7 +47,7 @@ cp .env.example .env
 | `GRAPH_TENANT_ID` | MS Graph API tenant | portal.azure.com |
 | `GRAPH_CLIENT_ID` | MS Graph app registration | portal.azure.com |
 | `GRAPH_CLIENT_SECRET` | MS Graph app secret | portal.azure.com |
-| `GRAPH_USER_EMAIL` | Hanna mailbox email | Azure AD |
+| `GRAPH_USER_EMAIL` | Authenticated mailbox email | Azure AD |
 
 **Opcionális kulcsok:**
 
@@ -142,7 +142,7 @@ docker exec cc-backend python3 /app/scripts/ingest_subfolders.py --limit 500
 
 | Folyamat | Ütemezés | LaunchAgent |
 |----------|----------|-------------|
-| Healthcheck + auto-restart | 5 percenként | `com.openclaw.hanna-healthcheck` |
+| Healthcheck + auto-restart | 5 percenként | `com.openclaw.cc-healthcheck` |
 | NFFKU monitoring + ingest | Naponta 06:15 | `com.openclaw.nffku-monitor` |
 | Email processing | 2 óránként | Backend scheduler (ha `AUTO_PROCESS_ENABLED=true`) |
 | Feedback analytics | Naponta 05:00 | Backend scheduler |
@@ -154,7 +154,7 @@ docker exec cc-backend python3 /app/scripts/ingest_subfolders.py --limit 500
 ```bash
 # Logok ellenőrzése
 cat /tmp/bge_m3_service.log
-cat /tmp/hanna-reranker.log
+cat /tmp/bge-reranker.log
 
 # Kézi indítás debug módban
 cd ~/DEV/local_llm/bge_m3 && .venv/bin/python app.py

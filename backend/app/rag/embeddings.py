@@ -49,9 +49,9 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
         try:
             return _embed_bge_m3(texts)
         except Exception as e:
-            print(f"[hanna] BGE-M3 embedding failed: {e}")
+            print(f"[cc] BGE-M3 embedding failed: {e}")
             if settings.openai_api_key:
-                print("[hanna] Falling back to OpenAI embeddings")
+                print("[cc] Falling back to OpenAI embeddings")
                 return _embed_openai(texts)
             raise
     return _embed_openai(texts)
@@ -79,5 +79,5 @@ def embed_texts_ingest(texts: list[str]) -> list[list[float]]:
     try:
         return _embed_bge_m3_ingest(texts)
     except Exception as e:
-        print(f"[hanna] BGE-M3 ingest instance failed: {e}, falling back to search instance")
+        print(f"[cc] BGE-M3 ingest instance failed: {e}, falling back to search instance")
         return embed_texts(texts)

@@ -1,32 +1,32 @@
 #!/bin/bash
 # =============================================================================
-# Hanna — Full Install Script
+# CustomerCare — Full Install Script
 # =============================================================================
-# Sets up everything needed to run Hanna on a new machine:
+# Sets up everything needed to run CustomerCare on a new machine:
 #   1. .env from template
 #   2. Native GPU services (BGE-M3 embedding + reranker)
 #   3. LaunchAgents (auto-start services)
 #   4. Docker services (backend + DB + Langfuse)
 #   5. Pre-flight health check
 #
-# Usage: cd ~/DEV/hanna && bash infra/install.sh
+# Usage: cd ~/DEV/customercare && bash infra/install.sh
 # =============================================================================
 
 set -e
-HANNA_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-LOCAL_LLM="$(dirname "$HANNA_DIR")/local_llm"
+CC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+LOCAL_LLM="$(dirname "$CC_DIR")/local_llm"
 PLIST_DIR="$HOME/Library/LaunchAgents"
 
 echo "============================================"
-echo "  Hanna Install"
-echo "  Directory: $HANNA_DIR"
+echo "  CustomerCare Install"
+echo "  Directory: $CC_DIR"
 echo "============================================"
 echo ""
 
 # ─── 1. .env ─────────────────────────────────────────────────────────────────
 echo "[1/6] Environment"
-if [ ! -f "$HANNA_DIR/.env" ]; then
-    cp "$HANNA_DIR/.env.example" "$HANNA_DIR/.env"
+if [ ! -f "$CC_DIR/.env" ]; then
+    cp "$CC_DIR/.env.example" "$CC_DIR/.env"
     echo "  ⚠️  Created .env from template — fill in API keys before starting!"
 else
     echo "  ✅ .env exists"
@@ -45,7 +45,7 @@ setup_bge_m3() {
     else
         echo "  📦 Setting up BGE-M3 search service..."
         mkdir -p "$dir"
-        cp "$HANNA_DIR/infra/gpu_services/bge_m3_app.py" "$dir/app.py" 2>/dev/null || true
+        cp "$CC_DIR/infra/gpu_services/bge_m3_app.py" "$dir/app.py" 2>/dev/null || true
     fi
 
     if [ -d "$ingest_dir" ] && [ -f "$ingest_dir/app.py" ]; then
@@ -53,7 +53,7 @@ setup_bge_m3() {
     else
         echo "  📦 Setting up BGE-M3 ingest service..."
         mkdir -p "$ingest_dir"
-        cp "$HANNA_DIR/infra/gpu_services/bge_m3_ingest_app.py" "$ingest_dir/app.py" 2>/dev/null || true
+        cp "$CC_DIR/infra/gpu_services/bge_m3_ingest_app.py" "$ingest_dir/app.py" 2>/dev/null || true
     fi
 
     # Create shared venv if missing
@@ -61,7 +61,7 @@ setup_bge_m3() {
     if [ ! -d "$venv" ] && [ ! -L "$venv" ]; then
         echo "  📦 Creating BGE-M3 venv..."
         python3 -m venv "$venv"
-        "$venv/bin/pip" install -q -r "$HANNA_DIR/infra/gpu_services/requirements-bge-m3.txt"
+        "$venv/bin/pip" install -q -r "$CC_DIR/infra/gpu_services/requirements-bge-m3.txt"
         echo "  ✅ BGE-M3 venv ready"
         # Symlink for ingest
         ln -sf "$venv" "$ingest_dir/.venv" 2>/dev/null || true
@@ -78,14 +78,14 @@ setup_reranker() {
     else
         echo "  📦 Setting up Reranker service..."
         mkdir -p "$dir"
-        cp "$HANNA_DIR/infra/gpu_services/reranker_main.py" "$dir/main.py" 2>/dev/null || true
+        cp "$CC_DIR/infra/gpu_services/reranker_main.py" "$dir/main.py" 2>/dev/null || true
     fi
 
     local venv="$dir/.venv"
     if [ ! -d "$venv" ] && [ ! -L "$venv" ]; then
         echo "  📦 Creating Reranker venv..."
         python3 -m venv "$venv"
-        "$venv/bin/pip" install -q -r "$HANNA_DIR/infra/gpu_services/requirements-reranker.txt"
+        "$venv/bin/pip" install -q -r "$CC_DIR/infra/gpu_services/requirements-reranker.txt"
         echo "  ✅ Reranker venv ready"
     else
         echo "  ✅ Reranker venv exists"
@@ -100,11 +100,11 @@ setup_reranker
 echo ""
 echo "[3/6] LaunchAgents"
 mkdir -p "$PLIST_DIR"
-for plist in "$HANNA_DIR"/infra/*.plist; do
+for plist in "$CC_DIR"/infra/*.plist; do
     name=$(basename "$plist")
     # Substitute paths for current install location
     sed \
-        -e "s|/Users/varadiimre/DEV/hanna|$HANNA_DIR|g" \
+        -e "s|/Users/varadiimre/DEV/customercare|$CC_DIR|g" \
         -e "s|/Users/varadiimre/DEV/local_llm|$LOCAL_LLM|g" \
         -e "s|/Users/varadiimre/.openclaw/jogszabaly-rag/bge_m3_service/.venv|$LOCAL_LLM/bge_m3/.venv|g" \
         -e "s|/Users/varadiimre/.venv/reranker|$LOCAL_LLM/reranker/.venv|g" \
@@ -117,7 +117,7 @@ done
 # ─── 4. Docker ───────────────────────────────────────────────────────────────
 echo ""
 echo "[4/6] Docker Services"
-cd "$HANNA_DIR"
+cd "$CC_DIR"
 
 echo "  Building backend image..."
 docker compose build backend 2>&1 | tail -2
@@ -151,7 +151,7 @@ done
 # ─── 6. Pre-flight ───────────────────────────────────────────────────────────
 echo ""
 echo "[6/6] Pre-flight Check"
-bash "$HANNA_DIR/scripts/preflight.sh"
+bash "$CC_DIR/scripts/preflight.sh"
 
 echo ""
 echo "============================================"

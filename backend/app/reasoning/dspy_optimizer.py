@@ -1,8 +1,8 @@
 """
-DSPy prompt optimization for Hanna draft generation.
+DSPy prompt optimization for CustomerCare draft generation.
 
 Level 3 of the learning system:
-  - HannaDraftSignature — DSPy Signature for email draft generation
+  - CCDraftSignature — DSPy Signature for email draft generation
   - build_trainset() — Create training data from reasoning_traces
   - run_optimization() — MIPROv2 optimizer to find better prompts
   - export_to_langfuse() — Push optimized prompt for production use
@@ -39,13 +39,13 @@ def _get_dspy():
 
 
 def create_draft_module():
-    """Create a DSPy module for Hanna draft generation.
+    """Create a DSPy module for CustomerCare draft generation.
 
     Returns a configured dspy.Module instance.
     """
     dspy = _get_dspy()
 
-    class HannaDraftSignature(dspy.Signature):
+    class CCDraftSignature(dspy.Signature):
         """Generate a customer service email reply in Hungarian for the OETP program.
         Use ONLY the provided facts. Never invent dates, amounts, or deadlines.
         Reply in 2-4 sentences, formal but friendly tone (magázás).
@@ -59,10 +59,10 @@ def create_draft_module():
         body: str = dspy.OutputField(desc="HTML reply body (2-4 sentences, Hungarian, magázás)")
         confidence: str = dspy.OutputField(desc="high, medium, or skip")
 
-    class HannaDraftModule(dspy.Module):
+    class CCDraftModule(dspy.Module):
         def __init__(self):
             super().__init__()
-            self.generate = dspy.ChainOfThought(HannaDraftSignature)
+            self.generate = dspy.ChainOfThought(CCDraftSignature)
 
         def forward(self, email_text, email_subject, facts, category):
             return self.generate(
@@ -72,7 +72,7 @@ def create_draft_module():
                 category=category,
             )
 
-    return HannaDraftModule()
+    return CCDraftModule()
 
 
 # ─── Training Data ───────────────────────────────────────────────────────────

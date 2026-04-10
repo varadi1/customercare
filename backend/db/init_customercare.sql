@@ -1,4 +1,4 @@
--- Hanna OETP RAG Database Schema
+-- CustomerCare RAG Database Schema
 -- Run against PostgreSQL (neu-docs-db, port 5433, user: klara)
 -- CREATE DATABASE customercare OWNER klara;
 -- \c customercare

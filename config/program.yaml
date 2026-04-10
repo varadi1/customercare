@@ -186,3 +186,82 @@ learning:
 
   # L5: Reranker fine-tuning (manual)
   reranker_finetuning: false
+
+# --- External program database ------------------------------------------------
+# Schema definition for applicant/project data lookups.
+# The DB connection itself is in .env (PROGRAM_DB_*).
+# If this section is absent, DB enrichment is silently skipped.
+database:
+  # Primary table
+  primary_table: "competitions"
+  soft_delete: "deleted = 0"            # appended to WHERE, or null if none
+
+  # Column mapping: logical name → actual DB column
+  # Only mapped columns are queried. Omit what doesn't exist.
+  columns:
+    app_id: "palyazati_kodszam"         # REQUIRED — unique application identifier
+    status: "status"                     # REQUIRED — status code or text
+    applicant_name: "palyazo_neve"
+    applicant_email: "palyazo_email"
+    representative_name: "meghatalmazott_neve"
+    representative_email: "megbizott_email"
+    location: "megvalositasi_telepules"
+    region: "megvalositasi_megye"
+    funding_requested: "igenyelt_tamogatas"
+    funding_approved: "jovahagyott_tamogatas"
+    funding_awarded: "megitelt_tamogatas"
+    category: "celterulet"
+    declaration_date: "nyilatkozat"
+    pod: "pod"
+
+  # Optional JOIN (e.g. dealer/partner table)
+  join:
+    table: "dealers"
+    on: "c.dealer_id = d.id"            # primary=c, joined=d
+    columns:
+      dealer_name: "d.name"
+
+  # Status code → display text (empty = use raw value from DB)
+  status_map:
+    0: "Piszkozat"
+    1: "Benyújtva"
+    2: "Formai ellenőrzés alatt"
+    3: "Értékelés alatt"
+    4: "Hiánypótlás"
+    5: "Döntésre vár"
+    6: "Nyertes"
+    7: "Nem nyertes"
+    8: "Elutasított"
+    9: "Visszavont"
+    10: "Szerződéskötés"
+    11: "Megvalósítás"
+    12: "Elszámolás"
+    13: "Lezárt"
+
+  # Category/enum display maps (key = logical column name)
+  category_maps:
+    category:
+      1: "1. célterület: Új napelem + tároló"
+      2: "2. célterület: Meglévő rendszer bővítése tárolóval"
+
+  # Identity: which logical email columns to match against sender
+  identity_fields: ["applicant_email", "representative_email"]
+
+  # Result statuses: mask status text for unidentified senders
+  result_statuses: [6, 7, 8]
+
+  # Display labels for formatted output (logical column → Hungarian label)
+  display_labels:
+    app_id: "Pályázati kódszám"
+    applicant_name: "Pályázó neve"
+    status: "Státusz"
+    representative_name: "Meghatalmazott"
+    category: "Célterület"
+    location: "Megvalósítás helye"
+    funding_requested: "Igényelt támogatás"
+    funding_approved: "Jóváhagyott támogatás"
+    dealer_name: "Kivitelező"
+    pod: "POD szám"
+
+  # Regex to extract app IDs from email body (null = no auto-extraction)
+  app_id_pattern: "OETP-\\d{4}-\\d{4,8}"

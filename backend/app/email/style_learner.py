@@ -1,6 +1,6 @@
 """Style learner: analyze colleague sent emails to extract response patterns.
 
-Builds a local pattern database from real sent emails that Hanna can use
+Builds a local pattern database from real sent emails that CC can use
 to match her draft style to the actual colleague style.
 """
 
@@ -176,9 +176,10 @@ async def analyze_sent_items(
         if len(stripped) < 30:
             continue
 
-        # Skip Hanna AI drafts — they pollute style patterns with Hanna's own style
-        if ("Hanna AI Draft" in body_html or "🤖 Hanna" in body_html
-                or "Hanna - draft" in body_html or "background:#f0f0f0" in body_html):
+        # Skip CC/Hanna AI drafts — they pollute style patterns with CC's own style
+        if ("CC AI Draft" in body_html or "Hanna AI Draft" in body_html
+                or "CC - draft" in body_html or "Hanna - draft" in body_html
+                or "background:#f0f0f0" in body_html):
             continue
 
         features = _analyze_single_email(body_text)

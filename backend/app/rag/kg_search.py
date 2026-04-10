@@ -1,4 +1,4 @@
-"""Knowledge Graph search for Hanna OETP RAG.
+"""Knowledge Graph search for CustomerCare OETP RAG.
 
 Implements entity-based expansion: query → entities → 1-hop relations → related chunks.
 """

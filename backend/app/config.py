@@ -1,6 +1,13 @@
 """CustomerCare backend configuration."""
 
+import logging
+from pathlib import Path
+from typing import Any
+
+import yaml
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -84,6 +91,7 @@ class Settings(BaseSettings):
     authority_snapshot_dir: str = "/app/data/authority_snapshots"
 
     # Program-specific external database (optional, set in .env)
+    program_db_driver: str = "mysql"  # "mysql" (pymysql) or "mssql" (pymssql/Azure SQL)
     program_db_host: str = ""
     program_db_port: int = 3306
     program_db_user: str = ""
@@ -99,3 +107,38 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# --- Program YAML config (loaded once at startup) ----------------------------
+
+_program_config: dict[str, Any] | None = None
+
+
+def get_program_config() -> dict[str, Any]:
+    """Load and cache program.yaml. Returns empty dict if not found."""
+    global _program_config
+    if _program_config is not None:
+        return _program_config
+
+    path = Path(settings.program_config)
+    if not path.exists():
+        # Try relative to /app (Docker) or cwd
+        for candidate in [Path("/app") / settings.program_config, Path.cwd() / settings.program_config]:
+            if candidate.exists():
+                path = candidate
+                break
+
+    if path.exists():
+        with open(path) as f:
+            _program_config = yaml.safe_load(f) or {}
+        logger.info("[cc] Program config loaded: %s (%d sections)", path, len(_program_config))
+    else:
+        logger.warning("[cc] Program config not found: %s", settings.program_config)
+        _program_config = {}
+
+    return _program_config
+
+
+def get_db_config() -> dict[str, Any]:
+    """Get the database section from program.yaml. Returns empty dict if absent."""
+    return get_program_config().get("database", {})

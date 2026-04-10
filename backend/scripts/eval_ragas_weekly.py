@@ -5,7 +5,7 @@ Runs Faithfulness + Context Precision + Answer Relevancy metrics
 on the last N drafts from the draft store. Generates Obsidian report.
 
 Usage:
-    cd /Users/varadiimre/DEV/hanna/backend
+    cd /Users/varadiimre/DEV/customercare/backend
     ../.venv-eval/bin/python scripts/eval_ragas_weekly.py [--limit 30] [--report]
 """
 
@@ -22,7 +22,7 @@ from pathlib import Path
 import httpx
 from bs4 import BeautifulSoup
 
-HANNA_URL = os.getenv("HANNA_URL", "http://localhost:8101")
+CC_URL = os.getenv("CC_URL", "http://localhost:8101")
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
 OBSIDIAN_REPORTS = Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents/PARA/!inbox/!reports"
 
@@ -35,7 +35,7 @@ def _html_to_text(html: str) -> str:
 
 def _search(query: str, top_k: int = 5) -> list[str]:
     """Get retrieval context for a query."""
-    r = httpx.post(f"{HANNA_URL}/search", json={"query": query, "top_k": top_k}, timeout=30)
+    r = httpx.post(f"{CC_URL}/search", json={"query": query, "top_k": top_k}, timeout=30)
     if r.status_code != 200:
         return []
     return [res.get("text", "")[:500] for res in r.json().get("results", [])[:5]]
@@ -44,7 +44,7 @@ def _search(query: str, top_k: int = 5) -> list[str]:
 def _generate_and_eval(question: str, subject: str = "") -> dict | None:
     """Generate draft and collect eval data."""
     try:
-        r = httpx.post(f"{HANNA_URL}/draft/generate", json={
+        r = httpx.post(f"{CC_URL}/draft/generate", json={
             "email_text": question[:3000],
             "email_subject": subject,
             "sender_name": "Eval Pályázó",
@@ -114,7 +114,7 @@ def compute_faithfulness_manual(draft_text: str, context: list[str]) -> float:
 
 
 def compute_semantic_sim(text_a: str, text_b: str) -> float:
-    """Embedding cosine similarity via Hanna's BGE-M3."""
+    """Embedding cosine similarity via CC BGE-M3."""
     if not text_a or not text_b:
         return 0.0
     try:
@@ -224,11 +224,11 @@ def run_ragas_eval(limit: int = 30, generate_report: bool = False):
 
 def _write_report(stats: dict, results: list[dict]):
     now = datetime.now()
-    filename = f"{now.strftime('%y%m%d')}-hanna-ragas-eval.md"
+    filename = f"{now.strftime('%y%m%d')}-cc-ragas-eval.md"
 
     low_faith = [r for r in results if r["faithfulness"] < 0.5]
 
-    md = f"""# Hanna RAGAS Eval — {now.strftime('%Y-%m-%d %H:%M')}
+    md = f"""# CustomerCare RAGAS Eval — {now.strftime('%Y-%m-%d %H:%M')}
 
 ## Összefoglaló
 

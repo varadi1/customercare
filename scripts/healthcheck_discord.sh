@@ -1,20 +1,20 @@
 #!/bin/bash
-# Hanna ecosystem health check — Discord alerts on failure + auto-restart
+# CustomerCare ecosystem health check — Discord alerts on failure + auto-restart
 # Checks: backend (:8101), DB (pg_isready), BGE search/ingest, reranker
 # Run via LaunchAgent every 5 minutes
 
-HANNA_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CC_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Discord bot config
 DISCORD_BOT_TOKEN="${DISCORD_BOT_TOKEN:-MTQ2ODk3NTM2MjExMjIyNTQyNA.G8ZQHb.TYV6SSieuUDgX6i06jm9pzkAf2RgxDtWAOzsW0}"
 DISCORD_CHANNEL_ID="${DISCORD_CHANNEL_ID:-1468974303159517396}"
-STATE_FILE="/tmp/hanna_healthcheck_state"
+STATE_FILE="/tmp/cc_healthcheck_state"
 
 # Services: name|check_type|url_or_cmd|restart_cmd
 # check_type: http = curl, docker = docker healthcheck, process = kill pattern
 SERVICES=(
-    "Hanna-DB|docker|cc-db|docker restart cc-db"
-    "Hanna-backend|http|http://localhost:8101/livez|docker restart cc-backend"
+    "CC-DB|docker|cc-db|docker restart cc-db"
+    "CC-backend|http|http://localhost:8101/livez|docker restart cc-backend"
     "BGE-M3-search|http|http://localhost:8104/health|kill:bge_m3/app.py"
     "BGE-M3-ingest|http|http://localhost:8114/health|kill:bge_m3_ingest/app.py"
     "Reranker|http|http://localhost:8102/health|kill:uvicorn main:app.*--port 8102"
@@ -82,17 +82,17 @@ for entry in "${SERVICES[@]}"; do
 
     if check_service "$check_type" "$target"; then
         # Service is up — extra DB data check
-        if [ "$name" = "Hanna-DB" ]; then
-            db_prev=$(check_prev "Hanna-DB-data")
+        if [ "$name" = "CC-DB" ]; then
+            db_prev=$(check_prev "CC-DB-data")
             if check_db_data; then
-                NEW_STATE="${NEW_STATE}Hanna-DB-data=ok\n"
+                NEW_STATE="${NEW_STATE}CC-DB-data=ok\n"
                 if [ "$db_prev" = "down" ]; then
-                    send_discord "✅ **Hanna-DB adatok** — helyreállt (chunks tábla elérhető)"
+                    send_discord "✅ **CC-DB adatok** — helyreállt (chunks tábla elérhető)"
                 fi
             else
-                NEW_STATE="${NEW_STATE}Hanna-DB-data=down\n"
+                NEW_STATE="${NEW_STATE}CC-DB-data=down\n"
                 if [ "$db_prev" != "down" ]; then
-                    send_discord "🚨 **Hanna-DB** — fut, de a chunks tábla ÜRES vagy nem elérhető! Init script probléma?"
+                    send_discord "🚨 **CC-DB** — fut, de a chunks tábla ÜRES vagy nem elérhető! Init script probléma?"
                 fi
             fi
         fi

@@ -14,6 +14,7 @@ tiktoken==0.8.0
 rank-bm25==0.2.2
 asyncpg==0.30.0
 pymysql==1.1.1
+pymssql==2.3.2
 
 langfuse>=2.0.0,<3.0.0
 dspy>=2.5.0

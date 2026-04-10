@@ -167,7 +167,7 @@ async def _notify_discord_run(stats: dict) -> None:
         return
 
     msg = (
-        f"📋 **Hanna** | "
+        f"📋 **CC** | "
         f"📬 {polled} email | "
         f"✅ {drafts} draft | "
         f"🟢 {stats.get('high_confidence', 0)} "
@@ -182,7 +182,7 @@ async def _notify_discord_run(stats: dict) -> None:
 
 async def _notify_discord_error(error: str) -> None:
     """Send error alert to Discord."""
-    await _send_discord(f"🚨 **Hanna HIBA** | {error[:200]}")
+    await _send_discord(f"🚨 **CC HIBA** | {error[:200]}")
 
 
 async def _run_weekly_report():

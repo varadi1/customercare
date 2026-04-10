@@ -36,6 +36,7 @@ async def verify_draft(
     draft_text: str,
     facts: list[dict],
     max_claims: int = 8,
+    lf_trace=None,
 ) -> dict:
     """Run Chain of Verification on a draft.
 
@@ -75,6 +76,15 @@ async def verify_draft(
             max_tokens=800,
             json_mode=True,
         )
+
+        if lf_trace:
+            lf_trace.cove(
+                result=None,  # filled below after parse
+                usage=result.get("usage"),
+                model=result.get("model", ""),
+                provider=result.get("provider", ""),
+                duration_ms=result.get("duration_ms", 0),
+            )
 
         data = json.loads(result["content"])
         claims = data.get("claims", [])[:max_claims]

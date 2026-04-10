@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>/Users/varadiimre/DEV/hanna/scripts/monitor_nffku.py</string>
+        <string>/Users/varadiimre/DEV/customercare/scripts/monitor_nffku.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>

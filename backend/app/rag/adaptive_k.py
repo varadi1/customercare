@@ -103,7 +103,7 @@ def get_adaptive_k(query: str) -> dict:
     values = k_map[complexity]
     rerank_k = min(values["final_k"] + 5, values["retrieval_k"])
 
-    print(f"[hanna-oetp] Adaptive k: '{complexity}' → final_k={values['final_k']}, retrieval_k={values['retrieval_k']}")
+    print(f"[cc] Adaptive k: '{complexity}' → final_k={values['final_k']}, retrieval_k={values['retrieval_k']}")
 
     return {
         "final_k": values["final_k"],

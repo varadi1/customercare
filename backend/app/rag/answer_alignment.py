@@ -37,6 +37,7 @@ VÁLASZ (JSON):
 async def check_alignment(
     email_text: str,
     draft_text: str,
+    lf_trace=None,
 ) -> dict:
     """Check if the draft actually answers the customer's question.
 
@@ -73,11 +74,22 @@ async def check_alignment(
         verdict = data.get("verdict", "unknown")
         reason = data.get("reason", "")
 
-        return {
+        out = {
             "verdict": verdict,
             "reason": reason,
             "aligned": verdict in ("answers", "partial"),
         }
+
+        if lf_trace:
+            lf_trace.alignment(
+                result=out,
+                usage=result.get("usage"),
+                model=result.get("model", ""),
+                provider=result.get("provider", ""),
+                duration_ms=result.get("duration_ms", 0),
+            )
+
+        return out
 
     except Exception as e:
         return {"verdict": "error", "reason": str(e), "aligned": True}
