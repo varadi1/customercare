@@ -38,16 +38,24 @@ DOC_TYPE_MAP = {
     "general": "dokumentum",
 }
 
-AUTHORITY_MAP = {
-    "felhívás": 0.95,
-    "melléklet": 0.90,
-    "közlemény": 0.85,
-    "gyik": 0.80,
-    "segédlet": 0.75,
-    "dokumentum": 0.60,
-    "email_reply": 0.40,
-    "email_question": 0.35,
-}
+
+def _build_authority_map() -> dict[str, float]:
+    """Build authority map from program.yaml doc_types. Falls back to defaults."""
+    from ..config import get_program_config
+    pcfg = get_program_config()
+    doc_types = pcfg.get("doc_types", {})
+    m = {}
+    for name, cfg in doc_types.items():
+        if isinstance(cfg, dict) and "authority" in cfg:
+            m[name] = cfg["authority"]
+    return m or {
+        "felhívás": 0.95, "melléklet": 0.90, "közlemény": 0.85,
+        "gyik": 0.80, "segédlet": 0.75, "dokumentum": 0.60,
+        "email_reply": 0.40, "email_question": 0.35,
+    }
+
+
+AUTHORITY_MAP = _build_authority_map()
 
 _pool: asyncpg.Pool | None = None
 
@@ -189,7 +197,8 @@ async def ingest_text_async(
                 print(f"[ingest] Error inserting chunk {chunk_id}: {e}")
 
     # KG extraction for high-value doc types (non-blocking on failure)
-    if doc_type in {"felhívás", "melléklet", "közlemény", "gyik", "segédlet", "dokumentum"}:
+    # Extract KG for doc types with authority >= 0.5 (excludes low-value emails)
+    if _resolve_authority(doc_type) >= 0.5:
         kg_ent_total = 0
         kg_rel_total = 0
         try:
