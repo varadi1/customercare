@@ -65,8 +65,8 @@ Az `install.sh` automatikusan elindítja:
 
 | Service | Container | Port | Leírás |
 |---------|-----------|------|--------|
-| PostgreSQL + pgvector | cc-db | 5438 | RAG tudásbázis + KG |
-| FastAPI backend | cc-backend | 8101 | API + email pipeline |
+| PostgreSQL + pgvector | cc-db | 5440 | RAG tudásbázis + KG |
+| FastAPI backend | cc-backend | 8113 | API + email pipeline |
 | Langfuse | cc-langfuse | 3001 | Observability |
 | Langfuse DB | cc-langfuse-db | — | Langfuse PostgreSQL |
 
@@ -119,7 +119,7 @@ cd ~/DEV/local_llm/reranker && .venv/bin/python -m uvicorn main:app --host 0.0.0
 bash scripts/preflight.sh
 
 # Egyedi service health
-curl http://localhost:8101/health   # Backend
+curl http://localhost:8113/health   # Backend
 curl http://localhost:8104/health   # BGE-M3 Search
 curl http://localhost:8114/health   # BGE-M3 Ingest
 curl http://localhost:8102/health   # Reranker

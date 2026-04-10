@@ -70,13 +70,16 @@ Részletes architektúra leírás: [CLAUDE.md](CLAUDE.md) és [DEPLOYMENT.md](DE
 ### Refaktor terv
 
 1. ✅ `config/program.yaml` — program konfiguráció séma
-2. ⬜ `config.py` — yaml betöltés + Settings integráció
-3. ⬜ `ingest.py` — doc_type mapping configból
-4. ⬜ `main.py` — system prompt, greeting, signature configból
-5. ⬜ `guardrails.py` — szabályok configból
-6. ⬜ `skip_filter.py` — skip domains/patterns configból
-7. ⬜ `scrape_nffku_oetp.py` → `scrape.py` — generikus scraper
-8. ⬜ `drafts.py` — aláírás blokk configból
+2. ✅ `config.py` — yaml betöltés + Settings integráció (`get_program_config()`, `get_db_config()`)
+3. ✅ `radix_client.py` — generikus program DB client (mysql/mssql, schema YAML-ből)
+4. ✅ `observability.py` — 15+ Langfuse span típus, token tracking
+5. ✅ Teljes `hanna` → `cc` rename (78 fájl)
+6. ⬜ `ingest.py` — doc_type mapping configból
+7. ⬜ `main.py` — system prompt, greeting, signature configból
+8. ⬜ `guardrails.py` — szabályok configból
+9. ⬜ `skip_filter.py` — skip domains/patterns configból
+10. ⬜ `scrape_nffku_oetp.py` → `scrape.py` — generikus scraper
+11. ⬜ `drafts.py` — aláírás blokk configból
 
 ## Licenc
 

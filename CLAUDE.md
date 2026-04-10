@@ -37,8 +37,8 @@ bash scripts/healthcheck_discord.sh    # Manual health check
 
 | Service | Port | Container | Runtime |
 |---------|------|-----------|---------|
-| **CC Backend** (FastAPI) | 8101 | cc-backend | Docker |
-| **CC DB** (PostgreSQL+pgvector) | 5438 | cc-db | Docker |
+| **CC Backend** (FastAPI) | 8113 | cc-backend | Docker |
+| **CC DB** (PostgreSQL+pgvector) | 5440 | cc-db | Docker |
 | **Langfuse** (observability) | 3001 | cc-langfuse | Docker |
 | **BGE-M3 Embedding** (search) | 8104 | — | macOS LaunchAgent, MPS GPU |
 | **BGE-M3 Embedding** (ingest) | 8114 | — | macOS LaunchAgent, MPS GPU |
@@ -68,7 +68,7 @@ Email → Skip filter (auto-reply, internal @neuzrt.hu, thank-you)
       → Confidence routing (low → "CC - emberi válasz kell")
 ```
 
-### Database (cc-db, PostgreSQL+pgvector :5438)
+### Database (cc-db, PostgreSQL+pgvector :5440)
 
 **Database**: `customercare` (own container, init script: `backend/db/init_customercare.sql`)
 
@@ -85,8 +85,8 @@ Tables:
 backend/app/
 ├── main.py              # FastAPI endpoints + draft generation pipeline
 ├── llm_client.py        # Multi-provider LLM: Opus 4.6 → GPT-5.4 → Gemini
-├── config.py            # Pydantic Settings (env vars)
-├── observability.py     # Langfuse tracing wrapper
+├── config.py            # Pydantic Settings (env vars) + program.yaml loader
+├── observability.py     # Langfuse tracing (15+ span types, token tracking)
 ├── rag/
 │   ├── search.py        # Hybrid search: semantic + BM25 + KG → RRF → rerank
 │   ├── ingest.py        # Chunk → enrich → embed → KG extract → PostgreSQL
@@ -113,7 +113,8 @@ backend/app/
 │   ├── authority_monitor.py  # Authority drift snapshots + Discord alerts
 │   ├── feedback_analytics.py # LLM change categorization + chunk survival tracking
 │   ├── gap_detector.py      # Missing knowledge detection from human additions
-│   └── dspy_optimizer.py    # DSPy MIPROv2 prompt optimization
+│   ├── dspy_optimizer.py    # DSPy MIPROv2 prompt optimization
+│   └── radix_client.py     # Generic program DB client (mysql/mssql, schema from program.yaml)
 backend/scripts/
 ├── eval_live.py         # Live email eval (semantic + style + term overlap)
 ├── eval_ragas_weekly.py # RAGAS batch evaluation
@@ -189,17 +190,66 @@ Manual (quarterly) → finetune_reranker.py
 
 ## Configuration
 
-All config in `backend/app/config.py` via Pydantic Settings. Key env vars:
+**Two-layer config**: env vars (`.env`) for secrets/infra + YAML (`config/program.yaml`) for domain logic.
+
+### Environment Variables (`.env` → `backend/app/config.py`)
 
 - `CC_PG_DSN` — PostgreSQL connection (default: `postgresql://klara:klara_docs_2026@cc-db:5432/customercare`)
 - `AUTO_PROCESS_ENABLED` — Autonomous email processing (default: false)
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` — LLM providers
 - `GRAPH_TENANT_ID`, `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET` — MS Graph API
+- `PROGRAM_DB_DRIVER` — External DB driver: `mysql` (pymysql) or `mssql` (pymssql/Azure SQL)
+- `PROGRAM_DB_HOST`, `PROGRAM_DB_PORT`, `PROGRAM_DB_USER`, `PROGRAM_DB_PASSWORD`, `PROGRAM_DB_NAME` — External program DB
+- `PROGRAM_DB_ENABLED` — Enable program DB enrichment (default: false)
+- `PROGRAM_CONFIG` — Path to program YAML (default: `config/program.yaml`)
 - `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID` — Monitoring alerts
 - `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` — Observability
 - `FEEDBACK_ANALYTICS_ENABLED` — Feedback analytics (default: true)
 - `DSPY_ENABLED` — DSPy prompt optimization (default: false)
-- `RERANKER_MODEL_PATH` — Fine-tuned reranker model path (reranker service env)
+
+### Program YAML (`config/program.yaml`)
+
+Domain-specific config loaded at startup via `config.get_program_config()`:
+- **program** — Name, organization, language
+- **scraper** — Knowledge base source URL + selectors
+- **doc_types** — Document categories + authority scores
+- **email** — Skip domains, greeting, signature, own_email
+- **llm** — Provider priority, system prompt template
+- **guardrails** — Safety rules (numerical, eligibility, legal, accent, AI-speak)
+- **verification** — NLI, CoVe, SelfCheck, alignment check toggles
+- **kg** — Knowledge Graph extraction settings
+- **learning** — 5-level learning system flags
+- **database** — External DB schema: table/column mapping, status maps, category maps, identity fields, display labels, `app_id_pattern` regex
+
+## Observability (Langfuse)
+
+Langfuse v2 SDK (`observability.py`). Two trace types:
+
+**`trace_draft` (per draft generation)**:
+| Span | Type | What's Captured |
+|------|------|-----------------|
+| `rag_search` | span | query, result_count, top_score, chunk_types |
+| `draft_llm` | generation | model, provider, **token count** (input/output/total) |
+| `cove_verification` | generation | claim verdicts, token count |
+| `selfcheck` | generation | N samples, consistency, token count |
+| `answer_alignment` | generation | verdict (answers/echoes/irrelevant), token count |
+| `legal_risk_check` | span | risk_level, claims_found |
+| `verbatim_rag` | span | external service latency, status, total_spans |
+| `nli_faithfulness` | span | external service latency, overall_verdict |
+| `guardrails` | span | rule-by-rule pass/fail, warning list |
+| `program_db_enrichment` | span | app_ids, found count, DB latency |
+| `verification` | span | combined NLI + CoVe + guardrails + selfcheck + alignment + legal |
+
+**`trace_processor` (autonomous batch)**:
+| Span | What's Captured |
+|------|-----------------|
+| `email_poll` | mailbox, email_count |
+| `email_processed` | subject, result, confidence |
+| `email_skipped` | subject, reason |
+| batch summary | total, drafted, skipped, errors, duration |
+
+**Prompt management**: `draft_generate_system` + `draft_generate_fewshot` fetched from Langfuse, fallback to hardcoded.
+**Datasets**: `customercare-draft-pairs` — draft-vs-sent pairs for DSPy training (L1 learning).
 
 ## Monitoring
 
