@@ -21,12 +21,10 @@ import httpx
 
 from ..config import settings
 from . import poller, drafts, draft_context, feedback
-from .skip_filter import check_skip
+from .skip_filter import check_skip, get_skip_domains
 from .attachments import list_attachments, analyze_email_attachments
 
 logger = logging.getLogger(__name__)
-
-INTERNAL_DOMAINS = {"neuzrt.hu", "nffku.hu", "nffku.onmicrosoft.com", "norvegalap.hu"}
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
@@ -62,7 +60,7 @@ async def _check_colleague_replied(mailbox: str, conversation_id: str, subject: 
             if msg.get("conversationId") == conversation_id:
                 sender = msg.get("from", {}).get("emailAddress", {}).get("address", "")
                 domain = sender.split("@")[-1].lower() if "@" in sender else ""
-                if domain in INTERNAL_DOMAINS:
+                if domain in get_skip_domains():
                     return True
 
     return False
@@ -192,7 +190,7 @@ async def _process_single_email(msg) -> dict[str, Any]:
 
     # Step 0: Skip internal emails — no draft needed for colleague-to-colleague
     sender_domain = (msg.sender_email or "").lower().split("@")[-1]
-    if sender_domain in INTERNAL_DOMAINS:
+    if sender_domain in get_skip_domains():
         result["status"] = "skipped"
         result["skip_reason"] = "internal_email"
         return result

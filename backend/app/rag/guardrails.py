@@ -1,20 +1,24 @@
-"""Domain-specific guardrails for OETP email drafts.
+"""Domain guardrails for email drafts.
 
-Rules that no generic framework provides — specific to the OETP program.
-Each guardrail returns a list of warnings. Any warning can trigger confidence downgrade.
+Config-driven via program.yaml guardrails section. Each guardrail can be
+toggled on/off. Custom rules loaded from guardrails.custom_rules.
 
-Guardrails:
-1. Numerical consistency (Ft, %, kW, dates) — already in main.py, extracted here
-2. Eligibility claims only from official docs (felhívás/GYIK), never from emails
-3. Contradicting chunks detection — flag if top chunks contradict each other
-4. OETP ID cross-check — draft OETP IDs must match email OETP IDs
-5. Forbidden phrases — never promise specific dates/timelines not in sources
+Built-in guardrails:
+1. Numerical consistency (Ft, %, kW, dates)
+2. Eligibility claims only from official docs
+3. Contradicting chunks detection
+4. App ID cross-check (uses app_id_pattern from database config)
+5. Forbidden phrases + AI-speak detection
+6. Provenance grounding
+7. Response completeness
 """
 
 from __future__ import annotations
 
 import re
 from bs4 import BeautifulSoup
+
+from ..config import get_program_config, get_db_config
 
 
 def run_all_guardrails(
@@ -34,25 +38,31 @@ def run_all_guardrails(
             "suggested_confidence": "high"|"medium"|"low" or None,
         }
     """
+    pcfg = get_program_config()
+    gr_cfg = pcfg.get("guardrails", {})
+
     warnings = []
     plain = BeautifulSoup(body_html, "html.parser").get_text() if body_html else ""
     facts_text = " ".join(f.get("text", "") for f in verified_facts)
 
     # 1. Numerical consistency
-    warnings.extend(_check_numerical(plain, facts_text))
+    if gr_cfg.get("numerical_check", True):
+        warnings.extend(_check_numerical(plain, facts_text))
 
     # 2. Eligibility claims from non-authoritative sources
-    warnings.extend(_check_eligibility_source(plain, top_chunks))
+    if gr_cfg.get("eligibility_check", True):
+        warnings.extend(_check_eligibility_source(plain, top_chunks))
 
     # 3. Contradicting chunks
     warnings.extend(_check_contradictions(top_chunks))
 
-    # 4. OETP ID cross-check
+    # 4. App ID cross-check
     if email_app_ids:
         warnings.extend(_check_app_id_match(plain, email_app_ids))
 
-    # 5. Forbidden phrases
-    warnings.extend(_check_forbidden_phrases(plain))
+    # 5. Forbidden phrases + AI-speak
+    if gr_cfg.get("ai_speak_check", True):
+        warnings.extend(_check_forbidden_phrases(plain))
 
     # 6. Provenance grounding
     warnings.extend(check_provenance(body_html, citations or {}))
@@ -60,6 +70,16 @@ def run_all_guardrails(
     # 7. Response completeness
     if email_text:
         warnings.extend(check_completeness(email_text, body_html))
+
+    # 8. Custom rules from program.yaml
+    for rule in gr_cfg.get("custom_rules", []):
+        pattern = rule.get("pattern", "")
+        if pattern and re.search(pattern, plain, re.IGNORECASE):
+            warnings.append({
+                "rule": rule.get("name", "custom"),
+                "severity": rule.get("severity", "medium"),
+                "detail": rule.get("message", f"Custom rule triggered: {pattern}"),
+            })
 
     # Determine suggested confidence
     high_severity = [w for w in warnings if w["severity"] == "high"]
@@ -149,7 +169,15 @@ ELIGIBILITY_PATTERNS = [
     re.compile(r"(feltétel.*teljesül|nem teljesül)", re.IGNORECASE),
 ]
 
-AUTHORITATIVE_TYPES = {"felhívás", "melléklet", "közlemény", "gyik", "segédlet"}
+def _get_authoritative_types() -> set[str]:
+    pcfg = get_program_config()
+    types = {
+        name for name, cfg in pcfg.get("doc_types", {}).items()
+        if isinstance(cfg, dict) and cfg.get("authority", 0) >= 0.75
+    }
+    return types or {"felhívás", "melléklet", "közlemény", "gyik", "segédlet"}
+
+AUTHORITATIVE_TYPES = _get_authoritative_types()
 
 
 def _check_eligibility_source(plain: str, top_chunks: list[dict]) -> list[dict]:
@@ -212,16 +240,18 @@ def _check_contradictions(top_chunks: list[dict]) -> list[dict]:
 # ── 4. OETP ID cross-check ──
 
 def _check_app_id_match(plain: str, email_app_ids: list[str]) -> list[dict]:
-    """Check that OETP IDs in the draft match the email's IDs."""
+    """Check that application IDs in the draft match the email's IDs."""
     warnings = []
-    draft_ids = set(re.findall(r"OETP-\d{4}-\d+", plain))
+    db_cfg = get_db_config()
+    pattern = db_cfg.get("app_id_pattern", r"[A-Z]+-\d{4}-\d+")
+    draft_ids = set(re.findall(pattern, plain, re.IGNORECASE))
     email_ids = set(email_app_ids)
 
     if draft_ids and email_ids and not (draft_ids & email_ids):
         warnings.append({
-            "rule": "oetp_id_mismatch",
+            "rule": "app_id_mismatch",
             "severity": "high",
-            "detail": f"Draft OETP IDs ({draft_ids}) ≠ email IDs ({email_ids})",
+            "detail": f"Draft app IDs ({draft_ids}) ≠ email IDs ({email_ids})",
         })
 
     return warnings
@@ -236,9 +266,6 @@ FORBIDDEN_PATTERNS = [
     # Never claim "free" unless sources say so
     (re.compile(r"(teljesen ingyenes|díjmentes|költségmentes)", re.IGNORECASE),
      "Ingyenesség állítása — ellenőrizendő"),
-    # Never reference Otthonfelújítási Program (different program!)
-    (re.compile(r"otthonfel[uú]j[ií]t[aá]si\s+program", re.IGNORECASE),
-     "Otthonfelújítási Program említése — OETP-vel keveri!"),
 ]
 
 
@@ -294,8 +321,11 @@ def check_provenance(body_html: str, citations: dict) -> list[dict]:
     paragraphs = [p.strip() for p in plain.split("\n") if len(p.strip()) > 30]
 
     # Filter out greeting, closing, and deferral phrases
-    skip_patterns = ["tisztelt", "üdvözlettel", "nemzeti energetikai", "montevideo",
-                     "kollégánk", "kérdésére", "1037"]
+    # Build skip patterns from program.yaml signature + standard patterns
+    pcfg = get_program_config()
+    sig_text = pcfg.get("email", {}).get("signature", "").lower()
+    sig_words = [w for w in re.findall(r"[a-záéíóöőúüű]{4,}", sig_text)]
+    skip_patterns = ["tisztelt", "üdvözlettel", "kollégánk", "kérdésére"] + sig_words[:5]
     content_paras = [
         p for p in paragraphs
         if not any(s in p.lower() for s in skip_patterns)

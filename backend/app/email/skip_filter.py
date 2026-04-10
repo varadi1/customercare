@@ -2,11 +2,34 @@
 
 Returns a skip_reason string (or None if the email should be processed).
 Integrated into /draft/context response so all scripts can use it.
+
+Skip domains and patterns are loaded from program.yaml (email.skip_domains,
+email.skip_patterns). Hardcoded patterns (thank-you, admin change) remain
+as they are language-specific and rarely change.
 """
 
 from __future__ import annotations
 
 import re
+
+from ..config import get_program_config
+
+
+def _get_email_config() -> dict:
+    """Get email section from program.yaml."""
+    return get_program_config().get("email", {})
+
+
+def get_skip_domains() -> set[str]:
+    """Get skip domains from program.yaml. Used by skip_filter + processor."""
+    cfg = _get_email_config()
+    return set(cfg.get("skip_domains", []))
+
+
+def get_skip_patterns() -> list[str]:
+    """Get additional skip subject patterns from program.yaml."""
+    cfg = _get_email_config()
+    return cfg.get("skip_patterns", [])
 
 
 def _strip_quoted(text: str) -> str:
@@ -123,10 +146,18 @@ _AUTOREPLY_SUBJECTS = [
 
 
 def _is_autoreply(subject: str, sender_email: str) -> bool:
-    """Detect auto-reply and system bounce messages."""
+    """Detect auto-reply and system bounce messages.
+
+    Checks hardcoded patterns + program.yaml email.skip_patterns.
+    """
     subj_lower = subject.lower()
+    # Hardcoded patterns (always active)
     for pattern in _AUTOREPLY_SUBJECTS:
         if re.search(pattern, subj_lower):
+            return True
+    # Config-driven patterns from program.yaml
+    for pattern in get_skip_patterns():
+        if pattern.lower() in subj_lower:
             return True
     if "mailer-daemon" in sender_email.lower() or "postmaster" in sender_email.lower():
         return True
@@ -153,6 +184,17 @@ def check_skip(
     """
     # Strip quoted parts to analyze only the new content
     stripped = _strip_quoted(email_text)
+
+    # 0. Internal email (sender domain in skip list)
+    skip_domains = get_skip_domains()
+    if sender_email and skip_domains:
+        sender_domain = sender_email.lower().split("@")[-1]
+        if sender_domain in skip_domains:
+            return {
+                "skip": True,
+                "reason": f"Belső email ({sender_domain}) — nem kell draft",
+                "skip_category": "internal_email",
+            }
 
     # 1. Auto-reply (cheapest check first)
     if _is_autoreply(email_subject, sender_email):

@@ -600,9 +600,33 @@ Stílus: Tisztelt Pályázó! / Üdvözlettel:""",
 
 
 def _get_draft_system_prompt() -> str:
-    """Get draft system prompt — from Langfuse if available, otherwise from code."""
+    """Get draft system prompt. Priority: Langfuse → program.yaml → hardcoded.
+
+    program.yaml llm.system_prompt is a template with placeholders:
+    {organization}, {program_name}, {own_email}
+    """
     from .observability import get_prompt
-    return get_prompt("draft_generate_system", fallback=DRAFT_GENERATE_SYSTEM)
+    from .config import get_program_config
+
+    # 1. Langfuse (production-managed prompts)
+    lf_prompt = get_prompt("draft_generate_system", fallback="")
+    if lf_prompt:
+        return lf_prompt
+
+    # 2. program.yaml template (generikus, new installs)
+    pcfg = get_program_config()
+    yaml_template = pcfg.get("llm", {}).get("system_prompt", "")
+    if yaml_template:
+        prog = pcfg.get("program", {})
+        email_cfg = pcfg.get("email", {})
+        return yaml_template.format(
+            organization=prog.get("organization", ""),
+            program_name=prog.get("full_name", prog.get("name", "")),
+            own_email=email_cfg.get("own_email", ""),
+        )
+
+    # 3. Hardcoded fallback (OETP-specific, kept for backward compat)
+    return DRAFT_GENERATE_SYSTEM
 
 
 def _get_draft_fewshot() -> list[dict]:
@@ -849,12 +873,22 @@ _HUNGARIAN_GIVEN_NAMES = {
 }
 
 
-NEU_SIGNATURE_HTML = (
-    '<p>Üdvözlettel:<br>'
-    'Nemzeti Energetikai Ügynökség<br>'
-    'Zártkörűen Működő Részvénytársaság<br>'
-    '1037 Budapest, Montevideo u. 14.</p>'
-)
+def _get_signature_html() -> str:
+    """Get signature HTML from program.yaml email.signature, fallback to hardcoded."""
+    from .config import get_program_config
+    pcfg = get_program_config()
+    sig_text = pcfg.get("email", {}).get("signature", "")
+    if sig_text:
+        # Convert plain text signature to HTML
+        lines = sig_text.strip().split("\n")
+        return "<p>" + "<br>".join(line.strip() for line in lines if line.strip()) + "</p>"
+    # Fallback
+    return (
+        '<p>Üdvözlettel:<br>'
+        'Nemzeti Energetikai Ügynökség<br>'
+        'Zártkörűen Működő Részvénytársaság<br>'
+        '1037 Budapest, Montevideo u. 14.</p>'
+    )
 
 
 def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
@@ -871,7 +905,7 @@ def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
     import re
 
     if not body_html:
-        return f"<p>{correct_greeting}</p>{NEU_SIGNATURE_HTML}"
+        return f"<p>{correct_greeting}</p>{_get_signature_html()}"
 
     # 1. Remove ALL LLM greetings ("Tisztelt ...!" patterns)
     # The LLM sometimes adds greeting despite being told not to.
@@ -923,7 +957,7 @@ def _fix_greeting_and_signature(body_html: str, correct_greeting: str) -> str:
     body_html = body_html.strip()
 
     # 5. Reassemble: greeting + LLM content + NEÜ signature
-    return f"<p>{correct_greeting}</p>{body_html}{NEU_SIGNATURE_HTML}"
+    return f"<p>{correct_greeting}</p>{body_html}{_get_signature_html()}"
 
 
 def _validate_citations(body_html: str, facts: list[dict], citations: dict) -> dict:

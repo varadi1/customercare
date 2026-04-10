@@ -136,8 +136,12 @@ guardrails:
   accent_check: true
   accent_language: "hu"
 
-  # Custom rules (program-specific)
-  custom_rules: []
+  # Custom rules (program-specific) — pattern: regex, severity: high|medium, message: str
+  custom_rules:
+    - name: "wrong_program_name"
+      pattern: "otthonfel[uú]j[ií]t[aá]si\\s+program"
+      severity: "medium"
+      message: "Otthonfelújítási Program említése — OETP-vel keveri!"
 
 # --- Verification layers ----------------------------------------------------
 verification:

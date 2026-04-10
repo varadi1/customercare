@@ -1,32 +1,35 @@
-"""Authority weighting — boost results from authoritative sources."""
+"""Authority weighting — boost results from authoritative sources.
+
+Weights loaded from program.yaml doc_types section. Falls back to hardcoded defaults.
+"""
 
 from __future__ import annotations
 
-# Authority weights by chunk_type
-# Higher = more authoritative (0.0 - 1.0)
-AUTHORITY_WEIGHTS: dict[str, float] = {
-    # Official program documents — always preferred
-    # PostgreSQL doc_type names (Hungarian) + ChromaDB legacy names
-    "felhívás": 1.00,               # Pályázati felhívás — THE source of truth
-    "palyazat_felhivas": 1.00,      # Legacy ChromaDB name
-    "melléklet": 0.95,              # Felhívás mellékletei
-    "palyazat_melleklet": 0.95,     # Legacy
-    "közlemény": 0.90,              # Hivatalos közlemények
-    "kozlemeny": 0.90,              # Legacy
-    "gyik": 0.85,                   # GYIK — curated Q&A
-    "segédlet": 0.80,               # Segédletek, útmutatók
-    "segedlet": 0.80,               # Legacy
-    
-    # Internal knowledge — lower priority
-    "dokumentum": 0.55,             # Általános dokumentumok
-    "document": 0.55,               # Legacy
-    "general": 0.50,                # Egyéb
-    
-    # Email-based knowledge — useful patterns but NOT authoritative
-    "email_reply": 0.40,            # Korábbi email válaszok
-    "email_qa": 0.40,               # Email Q&A párok
-    "email_question": 0.30,         # Beérkezett kérdések (legalacsonyabb)
-}
+from ..config import get_program_config
+
+
+def _build_authority_weights() -> dict[str, float]:
+    """Build authority weights from program.yaml doc_types. Falls back to defaults."""
+    pcfg = get_program_config()
+    doc_types = pcfg.get("doc_types", {})
+
+    weights = {}
+    for dt_name, dt_cfg in doc_types.items():
+        if isinstance(dt_cfg, dict) and "authority" in dt_cfg:
+            weights[dt_name] = dt_cfg["authority"]
+
+    if not weights:
+        # Fallback defaults
+        weights = {
+            "felhívás": 0.95, "melléklet": 0.90, "közlemény": 0.85,
+            "gyik": 0.80, "segédlet": 0.75, "dokumentum": 0.60,
+            "email_reply": 0.40, "email_question": 0.35,
+        }
+
+    return weights
+
+
+AUTHORITY_WEIGHTS = _build_authority_weights()
 
 # Default weight for unknown chunk types
 DEFAULT_WEIGHT = 0.45
@@ -36,10 +39,11 @@ DEFAULT_WEIGHT = 0.45
 AUTHORITY_INFLUENCE = 0.55
 
 # Chunk types that should be guaranteed in top results when relevant
+# Built from doc_types with authority >= 0.75 (official documents)
 PRIORITY_CHUNK_TYPES = {
-    "felhívás", "melléklet", "gyik", "közlemény", "segédlet",  # PostgreSQL doc_type
-    "palyazat_felhivas", "palyazat_melleklet", "kozlemeny", "segedlet",  # Legacy ChromaDB
-}
+    name for name, cfg in get_program_config().get("doc_types", {}).items()
+    if isinstance(cfg, dict) and cfg.get("authority", 0) >= 0.75
+} or {"felhívás", "melléklet", "gyik", "közlemény", "segédlet"}
 
 
 def get_authority_weight(chunk_type: str) -> float:

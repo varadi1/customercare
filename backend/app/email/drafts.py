@@ -15,6 +15,19 @@ from bs4 import BeautifulSoup
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
+def _get_fallback_html() -> str:
+    """Get fallback draft HTML from program.yaml signature."""
+    from ..config import get_program_config
+    pcfg = get_program_config()
+    sig = pcfg.get("email", {}).get("signature", "")
+    if sig:
+        lines = sig.strip().split("\n")
+        sig_html = "<p>" + "<br>".join(l.strip() for l in lines if l.strip()) + "</p>"
+    else:
+        sig_html = "<p>Üdvözlettel:<br>Ügyfélszolgálat</p>"
+    return f"<p>Kérdésére kollégánk hamarosan válaszol.</p>{sig_html}"
+
+
 def _final_safety_check(body_html: str, confidence: str) -> str:
     """Last-resort safety check on the draft HTML before saving to Outlook.
 
@@ -25,7 +38,7 @@ def _final_safety_check(body_html: str, confidence: str) -> str:
     If any issue found, replaces with a safe fallback message.
     """
     if not body_html or not body_html.strip():
-        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037 Budapest, Montevideo u. 14.</p>"
+        return _get_fallback_html()
 
     # Check for accent-free Hungarian text
     plain = BeautifulSoup(body_html, "html.parser").get_text()
@@ -33,7 +46,7 @@ def _final_safety_check(body_html: str, confidence: str) -> str:
 
     if len(plain) > 80 and not any(c in accent_chars for c in plain):
         print("[drafts] BLOCKED: accent-free draft detected at final gate!")
-        return "<p>Kérdésére kollégánk hamarosan válaszol.</p><p>Üdvözlettel:<br>Nemzeti Energetikai Ügynökség<br>Zártkörűen Működő Részvénytársaság<br>1037 Budapest, Montevideo u. 14.</p>"
+        return _get_fallback_html()
 
     return body_html
 
