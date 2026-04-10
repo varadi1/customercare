@@ -493,8 +493,11 @@ class Scraper:
         return await download_files(all_links, self.download_dir, self.extensions, self.rate_limit)
 
     async def ingest_results(self, results: list[ScraperResult], downloaded_files: list[Path] | None = None):
-        """Ingest scraped content + downloaded files into RAG."""
-        from .ingest import ingest_text, ingest_pdf
+        """Ingest scraped content + downloaded files into RAG.
+
+        Uses async ingest directly (avoids event loop conflicts in CLI context).
+        """
+        from .ingest import ingest_text_async
 
         total_chunks = 0
 
@@ -509,7 +512,7 @@ class Scraper:
                 source = f"scrape:{r.label}:{ann.get('date', 'nodate')}:{ann['title'][:50]}"
                 text = f"{ann['title']}\nDátum: {ann.get('date', 'n/a')}\n\n{ann['content']}"
                 try:
-                    n = ingest_text(
+                    n = await ingest_text_async(
                         text=text, source=source,
                         category="general", chunk_type=r.doc_type,
                         valid_from=ann.get("date"),
@@ -522,7 +525,7 @@ class Scraper:
             if not r.announcements and len(r.text) > 100:
                 source = f"scrape:{r.label}"
                 try:
-                    n = ingest_text(
+                    n = await ingest_text_async(
                         text=r.text, source=source,
                         category="general", chunk_type=r.doc_type,
                     )
@@ -530,14 +533,20 @@ class Scraper:
                 except Exception as e:
                     logger.warning("Ingest page text failed for %s: %s", source, e)
 
-        # Ingest downloaded PDFs
+        # Ingest downloaded PDFs (extract text → ingest_text_async)
         for path in (downloaded_files or []):
             if path.suffix.lower() != ".pdf":
                 continue
             doc_type = guess_doc_type(path.name)
             try:
-                n = ingest_pdf(
-                    pdf_path=str(path), source=path.name,
+                import fitz
+                doc = fitz.open(str(path))
+                pdf_text = "\n\n".join(page.get_text() for page in doc)
+                doc.close()
+                if len(pdf_text.strip()) < 50:
+                    continue
+                n = await ingest_text_async(
+                    text=pdf_text, source=path.name,
                     category="general", chunk_type=doc_type,
                 )
                 total_chunks += n or 0
