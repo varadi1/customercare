@@ -74,12 +74,12 @@ Részletes architektúra leírás: [CLAUDE.md](CLAUDE.md) és [DEPLOYMENT.md](DE
 3. ✅ `radix_client.py` — generikus program DB client (mysql/mssql, schema YAML-ből)
 4. ✅ `observability.py` — 15+ Langfuse span típus, token tracking
 5. ✅ Teljes `hanna` → `cc` rename (78 fájl)
-6. ⬜ `ingest.py` — doc_type mapping configból
-7. ⬜ `main.py` — system prompt, greeting, signature configból
-8. ⬜ `guardrails.py` — szabályok configból
-9. ⬜ `skip_filter.py` — skip domains/patterns configból
+6. ✅ `ingest.py` — authority map doc_types-ból, KG threshold config-driven
+7. ✅ `main.py` — system prompt (Langfuse → YAML → hardcoded), signature YAML-ből
+8. ✅ `guardrails.py` — toggle-ök + custom_rules YAML-ből, app_id_pattern config-ból
+9. ✅ `skip_filter.py` — skip domains/patterns YAML-ből, processor.py is YAML-t használ
 10. ⬜ `scrape_nffku_oetp.py` → `scrape.py` — generikus scraper
-11. ⬜ `drafts.py` — aláírás blokk configból
+11. ✅ `drafts.py` — signature + fallback YAML-ből
 
 ## Licenc
 
